@@ -1,0 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+  --color-brand-950: #172554;
+
+  --color-office-slate-900: #0f172a;
+  --color-office-slate-800: #1e293b;
+  --color-office-slate-300: #cbd5e1;
+  --color-office-gray: #f1f5f9;
+  --color-office-border: #e2e8f0;
+  --color-office-text: #1e293b;
+}
+
+@layer base {
+  body {
+    @apply font-sans bg-office-gray text-office-text antialiased;
+  }
+}
+
+.stat-card {
+  @apply bg-white p-5 rounded-xl shadow-[0_1px_3px_rgba(0,0,0,0.1)] border border-office-border;
+}
+
+.sidebar-item-active {
+  @apply bg-brand-600 text-white;
+}
+
+.sidebar-item-hover {
+  @apply hover:bg-office-slate-800 hover:text-white transition-all;
+}
