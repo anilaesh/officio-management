@@ -541,7 +541,7 @@ export default function InventoryPage() {
 
       // Logic: If approved borrow, decrement inventory. If returned, increment.
       if (selectedRequest.type === 'borrow') {
-        const itemIndex = updatedItems.findIndex((i: InventoryItem) => String(i.id) === String(selectedRequest.item_id));
+        const itemIndex = updatedItems.findIndex((i: InventoryItem) => i.id === selectedRequest.item_id);
         if (itemIndex !== -1) {
           if (status === 'approved' && selectedRequest.status === 'pending') {
             if (updatedItems[itemIndex].quantity < selectedRequest.quantity) {
@@ -555,7 +555,7 @@ export default function InventoryPage() {
           }
           
           localStorage.setItem('officio_demo_inventory', JSON.stringify(updatedItems));
-          setItems([...updatedItems]);
+          setItems(updatedItems);
           new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_INVENTORY' });
         }
       }
@@ -602,14 +602,9 @@ export default function InventoryPage() {
           const { error: updateItemError } = await supabase
             .from('inventory')
             .update({ quantity: newQuantity })
-            .eq('id', String(selectedRequest.item_id));
+            .eq('id', selectedRequest.item_id);
           
           if (updateItemError) throw updateItemError;
-          
-          // Update local state immediately for better UX
-          setItems(prev => prev.map(item => 
-            String(item.id) === String(selectedRequest.item_id) ? { ...item, quantity: newQuantity } : item
-          ));
         }
       }
 
@@ -619,22 +614,16 @@ export default function InventoryPage() {
         .eq('id', selectedRequest.id);
       
       if (error) throw error;
-
-      // Update local requests state immediately
-      setRequests(prev => prev.map(req => 
-        req.id === selectedRequest.id ? { ...req, status, admin_note: adminNote } : req
-      ));
-
+      
       setModalType(null);
       setAdminNote('');
       setIsSubmitting(false);
       toast(`Permintaan telah ${status === 'approved' ? 'disetujui' : status === 'returned' ? 'diselesaikan' : 'ditolak'}.`);
-      
       await fetchItems();
       await fetchRequests();
     } catch (err) {
       console.error(err);
-      toast('Gagal memperbarui status. Pastikan tabel inventory dan inventory_requests sudah dikonfigurasi.');
+      toast('Gagal memperbarui status.');
     } finally {
       setIsSubmitting(false);
     }
