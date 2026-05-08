@@ -538,15 +538,15 @@ export default function AttendancePage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Check In/Out Widget */}
-        <div className="lg:col-span-1">
-          <div className="bg-white rounded-3xl p-8 border border-office-border shadow-sm flex flex-col items-center text-center sticky top-8">
-            <div className="w-24 h-24 rounded-full bg-brand-50 flex items-center justify-center mb-6">
-              <Clock className="h-10 w-10 text-brand-600" />
+        <div className="lg:col-span-1 order-1 lg:order-1">
+          <div className="bg-white rounded-[2.5rem] p-8 lg:p-10 border border-office-border shadow-sm flex flex-col items-center text-center sticky top-24">
+            <div className="w-20 h-20 lg:w-24 lg:h-24 rounded-3xl bg-brand-50 flex items-center justify-center mb-6 rotate-3">
+              <Clock className="h-10 w-10 text-brand-600 -rotate-3" />
             </div>
-            <div className="text-5xl font-black text-gray-900 mb-2 leading-none">
+            <div className="text-5xl lg:text-6xl font-black text-gray-900 mb-2 leading-none tracking-tighter">
               {format(new Date(), 'HH:mm')}
             </div>
-            <div className="text-brand-600 font-bold text-sm uppercase tracking-widest mb-8">
+            <div className="text-brand-600 font-black text-[10px] lg:text-xs uppercase tracking-[0.2em] mb-10 bg-brand-50 px-4 py-1.5 rounded-full">
               Waktu Lokal Indonesia
             </div>
 
@@ -555,34 +555,38 @@ export default function AttendancePage() {
                 <button 
                   onClick={handleCheckIn}
                   disabled={isProcessing}
-                  className="w-full flex items-center justify-center gap-3 bg-brand-600 text-white py-5 rounded-2xl font-bold text-lg hover:bg-brand-700 transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-brand-100 disabled:opacity-70"
+                  className="w-full flex items-center justify-center gap-4 bg-brand-600 text-white py-6 rounded-[2rem] font-black text-lg hover:bg-brand-700 transition-all transform active:scale-[0.95] shadow-xl shadow-brand-100 disabled:opacity-70"
                 >
                   {isProcessing ? (
                     <div className="animate-spin rounded-full h-6 w-6 border-2 border-white/20 border-t-white"></div>
                   ) : (
                     <>
-                      <LogIn className="h-6 w-6" />
-                      Masuk Sekarang
+                      <LogIn size={24} />
+                      Masuk Kerja
                     </>
                   )}
                 </button>
               ) : todayAttendance.check_out ? (
-                <div className="p-6 bg-green-50 rounded-2xl flex flex-col items-center gap-2 border border-green-100 animate-in fade-in zoom-in duration-300">
-                  <CheckCircle2 className="h-10 w-10 text-green-500" />
-                  <p className="text-gray-900 font-bold">Terima Kasih!</p>
-                  <p className="text-gray-500 text-sm">Absensi hari ini selesai.</p>
+                <div className="p-8 bg-green-50 rounded-[2rem] flex flex-col items-center gap-3 border border-green-100 animate-in fade-in zoom-in duration-300">
+                  <div className="h-12 w-12 bg-green-500 text-white rounded-2xl flex items-center justify-center">
+                    <CheckCircle2 size={28} />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-slate-900 font-black text-xl">Kerja Selesai!</p>
+                    <p className="text-slate-500 text-sm font-medium">Sampai jumpa besok, {profile?.full_name?.split(' ')[0]}!</p>
+                  </div>
                 </div>
               ) : (
                 <button 
                   onClick={handleCheckOut}
                   disabled={isProcessing}
-                  className="w-full flex items-center justify-center gap-3 bg-rose-600 text-white py-5 rounded-2xl font-bold text-lg hover:bg-rose-700 transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-rose-100 disabled:opacity-70"
+                  className="w-full flex items-center justify-center gap-4 bg-slate-900 text-white py-6 rounded-[2rem] font-black text-lg hover:bg-black transition-all transform active:scale-[0.95] shadow-xl shadow-slate-200 disabled:opacity-70"
                 >
                   {isProcessing ? (
                     <div className="animate-spin rounded-full h-6 w-6 border-2 border-white/20 border-t-white"></div>
                   ) : (
                     <>
-                      <LogOut className="h-6 w-6" />
+                      <LogOut size={24} />
                       Absen Pulang
                     </>
                   )}
@@ -591,105 +595,103 @@ export default function AttendancePage() {
             </div>
 
             <div className="mt-10 pt-8 border-t border-office-border w-full grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Ceking In</p>
-                <p className="text-lg font-black text-gray-900">{todayAttendance?.check_in || '--:--'}</p>
+              <div className="bg-slate-50 p-4 rounded-2xl">
+                <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest">Ceking In</p>
+                <p className="text-xl font-black text-slate-900">{todayAttendance?.check_in || '--:--'}</p>
               </div>
-              <div>
-                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Ceking Out</p>
-                <p className="text-lg font-black text-gray-900">{todayAttendance?.check_out || '--:--'}</p>
+              <div className="bg-slate-50 p-4 rounded-2xl">
+                <p className="text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest">Ceking Out</p>
+                <p className="text-xl font-black text-slate-900">{todayAttendance?.check_out || '--:--'}</p>
               </div>
             </div>
           </div>
         </div>
 
         {/* Attendance History */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-3xl border border-office-border shadow-sm overflow-hidden text-sm">
-            <div className="p-8 border-b border-office-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-3">
-                Riwayat Kehadiran
-                <span className="bg-brand-50 text-brand-600 text-xs px-3 py-1 rounded-full">{history.length} Hari Terakhir</span>
-              </h2>
+        <div className="lg:col-span-2 space-y-6 order-2 lg:order-2">
+          <div className="bg-white rounded-[2.5rem] border border-office-border shadow-sm overflow-hidden text-sm">
+            <div className="p-8 lg:px-10 border-b border-office-border flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+              <div>
+                <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
+                  Riwayat
+                  <span className="bg-brand-50 text-brand-600 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">{history.length} Hari</span>
+                </h2>
+                <p className="text-slate-400 font-bold text-xs mt-1">Status kehadiran 30 hari terakhir</p>
+              </div>
               <div className="flex gap-2">
-                <button className="p-2 border border-office-border rounded-lg hover:bg-gray-50 transition-colors">
-                  <Search className="h-5 w-5 text-gray-400" />
+                <button className="h-12 w-12 flex items-center justify-center bg-slate-50 border border-office-border rounded-2xl hover:bg-slate-100 transition-all text-slate-400 active:scale-95">
+                  <Search size={20} />
                 </button>
-                <button className="flex items-center gap-2 px-4 py-2 border border-office-border rounded-lg hover:bg-gray-50 transition-colors font-bold text-gray-600">
-                  <Filter className="h-4 w-4" /> Filter
+                <button className="flex items-center gap-3 h-12 px-6 bg-slate-50 border border-office-border rounded-2xl hover:bg-slate-100 transition-all font-black text-slate-600 text-xs uppercase tracking-widest active:scale-95">
+                  <Filter size={16} /> Filter
                 </button>
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            {/* Tablet/Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
-                  <tr className="bg-office-gray">
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Tanggal</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Masuk</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Pulang</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Status</th>
-                    <th className="px-8 py-4"></th>
+                  <tr className="bg-slate-50/50">
+                    <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Tanggal</th>
+                    <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Masuk</th>
+                    <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Pulang</th>
+                    <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Status</th>
+                    <th className="px-10 py-5"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-office-border">
                   {loading ? (
                     [...Array(5)].map((_, i) => (
                       <tr key={i} className="animate-pulse">
-                        <td colSpan={5} className="px-8 py-6 h-16 bg-gray-50/50"></td>
+                        <td colSpan={5} className="px-10 py-8 h-20"><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
                       </tr>
                     ))
                   ) : history.length > 0 ? (
                     history.map((record: any) => (
-                      <tr key={record.id} className="hover:bg-gray-50/80 transition-colors">
-                        <td className="px-8 py-5">
+                      <tr key={record.id} className="group hover:bg-slate-50/50 transition-colors">
+                        <td className="px-10 py-6">
                           <div className="flex flex-col">
-                            <span className="font-bold text-gray-900">{format(new Date(record.date), 'dd MMM yyyy', { locale: id })}</span>
+                            <span className="font-black text-slate-900 text-base tracking-tight">{format(new Date(record.date), 'dd MMM yyyy', { locale: id })}</span>
                             {profile?.role === 'admin' && record.profiles?.full_name && (
-                              <span className="text-[10px] text-brand-600 font-bold uppercase tracking-tight">{record.profiles.full_name}</span>
+                              <span className="text-[10px] text-brand-600 font-black uppercase tracking-widest mt-0.5">{record.profiles.full_name}</span>
                             )}
                           </div>
                         </td>
-                        <td className="px-8 py-5">
-                          <span className="flex items-center gap-2 font-medium text-gray-600">
-                            <Clock className="h-4 w-4 text-brand-400" />
-                            {record.check_in || '-'}
+                        <td className="px-10 py-6">
+                          <span className="flex items-center gap-2 font-black text-slate-600">
+                            <Clock size={16} className="text-brand-400" />
+                            {record.check_in?.substring(0, 5) || '-'}
                           </span>
                         </td>
-                        <td className="px-8 py-5">
-                          <span className="flex items-center gap-2 font-medium text-gray-600">
-                            <Clock className="h-4 w-4 text-rose-400" />
-                            {record.check_out || '-'}
+                        <td className="px-10 py-6">
+                          <span className="flex items-center gap-2 font-black text-slate-600">
+                            <Clock size={16} className="text-rose-400" />
+                            {record.check_out?.substring(0, 5) || '-'}
                           </span>
                         </td>
-                        <td className="px-8 py-5">
+                        <td className="px-10 py-6">
                           <span className={cn(
-                            "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold",
-                            record.status === 'present' ? "bg-green-100 text-green-700" :
-                            record.status === 'late' ? "bg-amber-100 text-amber-700" :
-                            "bg-rose-100 text-rose-700"
+                            "inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest",
+                            record.status === 'present' ? "bg-emerald-50 text-emerald-600" :
+                            record.status === 'late' ? "bg-amber-50 text-amber-600" :
+                            "bg-rose-50 text-rose-600"
                           )}>
-                            <div className={cn("w-1.5 h-1.5 rounded-full",
-                              record.status === 'present' ? "bg-green-500" :
-                              record.status === 'late' ? "bg-amber-500" :
-                              "bg-rose-500"
-                            )}></div>
-                            {record.status === 'present' ? 'Hadir Tepat Waktu' : record.status === 'late' ? 'Terlambat' : 'Absen'}
+                             {record.status === 'present' ? 'Tepat Waktu' : record.status === 'late' ? 'Terlambat' : 'Absen'}
                           </span>
                         </td>
-                        <td className="px-8 py-5 text-right">
-                          <div className="flex justify-end gap-2">
+                        <td className="px-10 py-6 text-right">
+                          <div className="flex justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
                             {profile?.role === 'admin' && (
                               <button 
                                 onClick={() => setDeletingId(record.id)}
-                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                                title="Hapus Absensi"
+                                className="p-2.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
                               >
                                 <Trash2 size={18} />
                               </button>
                             )}
-                            <button className="text-gray-400 hover:text-brand-600">
-                              <ArrowUpRight className="h-5 w-5" />
+                            <button className="p-2.5 text-slate-300 hover:text-brand-600 hover:bg-brand-50 rounded-xl transition-all">
+                              <ArrowUpRight size={18} />
                             </button>
                           </div>
                         </td>
@@ -697,7 +699,7 @@ export default function AttendancePage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="px-8 py-12 text-center text-gray-500">
+                      <td colSpan={5} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
                         Belum ada riwayat absensi.
                       </td>
                     </tr>
@@ -705,9 +707,71 @@ export default function AttendancePage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile Card View */}
+            <div className="md:hidden divide-y divide-office-border">
+              {loading ? (
+                 [...Array(3)].map((_, i) => (
+                    <div key={i} className="p-6 space-y-4 animate-pulse">
+                       <div className="h-6 w-32 bg-slate-100 rounded"></div>
+                       <div className="grid grid-cols-2 gap-4">
+                          <div className="h-12 bg-slate-50 rounded-xl"></div>
+                          <div className="h-12 bg-slate-50 rounded-xl"></div>
+                       </div>
+                    </div>
+                 ))
+              ) : history.length > 0 ? (
+                history.map((record: any) => (
+                  <div key={record.id} className="p-6 space-y-4 bg-white active:bg-slate-50 transition-colors">
+                    <div className="flex items-center justify-between">
+                       <div className="flex flex-col">
+                          <span className="font-black text-slate-900 text-lg tracking-tight">{format(new Date(record.date), 'dd MMM yyyy', { locale: id })}</span>
+                          {profile?.role === 'admin' && record.profiles?.full_name && (
+                            <span className="text-[10px] text-brand-600 font-black uppercase tracking-widest">{record.profiles.full_name}</span>
+                          )}
+                       </div>
+                       <span className={cn(
+                          "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest",
+                          record.status === 'present' ? "bg-emerald-50 text-emerald-600" :
+                          record.status === 'late' ? "bg-amber-50 text-amber-600" :
+                          "bg-rose-50 text-rose-600"
+                       )}>
+                          {record.status === 'present' ? 'On Time' : record.status === 'late' ? 'Late' : 'Absent'}
+                       </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                       <div className="bg-slate-50 rounded-2xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Masuk</span>
+                          <span className="font-black text-slate-700 text-lg">{record.check_in?.substring(0, 5) || '--:--'}</span>
+                       </div>
+                       <div className="bg-slate-50 rounded-2xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Pulang</span>
+                          <span className="font-black text-slate-700 text-lg">{record.check_out?.substring(0, 5) || '--:--'}</span>
+                       </div>
+                    </div>
+
+                    {profile?.role === 'admin' && (
+                       <div className="flex justify-end pt-2">
+                          <button 
+                            onClick={() => setDeletingId(record.id)}
+                            className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-600 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                          >
+                             <Trash2 size={14} /> Hapus Data
+                          </button>
+                       </div>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
+                   Tidak ada data.
+                </div>
+              )}
+            </div>
             
-            <div className="p-6 bg-office-gray/50 border-t border-office-border text-center">
-               <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Pencatatan Berdasarkan Lokasi Perangkat & Waktu Server</p>
+            <div className="p-8 bg-slate-50/50 border-t border-office-border text-center">
+               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-loose">Secure Blockchain Verification & GPS Location Logs Active</p>
             </div>
           </div>
         </div>

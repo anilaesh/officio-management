@@ -12,7 +12,8 @@ import {
   Filter,
   User,
   ChevronRight,
-  Trash2
+  Trash2,
+  Image as ImageIcon
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
@@ -38,8 +39,11 @@ export default function LeaveRequestsPage() {
     type: 'cuti',
     start_date: '',
     end_date: '',
-    reason: ''
+    reason: '',
+    certificate: '' as string | null
   });
+
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (user?.id && !formData.user_id) {
@@ -215,6 +219,7 @@ export default function LeaveRequestsPage() {
       const newRequest: LeaveRequest = {
         id: tempId,
         ...newRequestData as any,
+        medical_certificate_url: formData.certificate,
         profiles: { full_name: displayName },
         created_at: new Date().toISOString()
       };
@@ -223,7 +228,8 @@ export default function LeaveRequestsPage() {
       new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_REQUIRED' });
       
       setIsModalOpen(false);
-      setFormData({ user_id: user?.id || '', custom_name: '', type: 'cuti', start_date: '', end_date: '', reason: '' });
+      setFormData({ user_id: user?.id || '', custom_name: '', type: 'cuti', start_date: '', end_date: '', reason: '', certificate: null });
+      setSelectedFile(null);
       setIsSubmitting(false);
       
       await fetchRequests();
@@ -231,10 +237,14 @@ export default function LeaveRequestsPage() {
     }
 
     try {
-      const { error } = await supabase.from('leave_requests').insert(newRequestData);
+      const { error } = await supabase.from('leave_requests').insert({
+        ...newRequestData,
+        medical_certificate_url: formData.certificate
+      });
       if (!error) {
         setIsModalOpen(false);
-        setFormData({ user_id: user.id, type: 'cuti', start_date: '', end_date: '', reason: '' });
+        setFormData({ user_id: user.id, type: 'cuti', start_date: '', end_date: '', reason: '', certificate: null, custom_name: '' });
+        setSelectedFile(null);
         setIsSubmitting(false);
         await fetchRequests();
       }
@@ -493,6 +503,59 @@ export default function LeaveRequestsPage() {
                 />
               </div>
 
+              {formData.type === 'izin_sakit' && (
+                <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Surat Dokter (Optional)</label>
+                  <div className="relative group">
+                    <input 
+                      type="file"
+                      accept="image/*,.pdf"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setSelectedFile(file);
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            setFormData(prev => ({ ...prev, certificate: reader.result as string }));
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="hidden"
+                      id="certificate-upload"
+                    />
+                    <label 
+                      htmlFor="certificate-upload"
+                      className="flex items-center justify-center gap-3 w-full p-6 border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer hover:border-brand-400 hover:bg-brand-50 transition-all"
+                    >
+                      {formData.certificate ? (
+                        <div className="flex items-center gap-3 text-brand-600 font-bold">
+                          <CheckCircle2 size={24} />
+                          <span className="text-sm truncate max-w-[200px]">{selectedFile?.name || 'File terpilih'}</span>
+                        </div>
+                      ) : (
+                         <div className="flex flex-col items-center gap-2 text-slate-400 font-bold group-hover:text-brand-500">
+                            <Plus size={24} />
+                            <span className="text-xs uppercase tracking-widest">Upload Surat Dokter</span>
+                         </div>
+                      )}
+                    </label>
+                  </div>
+                  {formData.certificate && (
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        setFormData(prev => ({ ...prev, certificate: null }));
+                        setSelectedFile(null);
+                      }}
+                      className="mt-2 text-[10px] font-black text-rose-500 uppercase tracking-widest hover:underline"
+                    >
+                      Hapus Lampiran
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="pt-4 flex gap-3">
                 <button 
                   type="button"
@@ -605,6 +668,19 @@ export default function LeaveRequestsPage() {
                               "{request.reason}"
                            </div>
                         </div>
+
+                        {request.medical_certificate_url && (
+                          <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                             <a 
+                               href={request.medical_certificate_url} 
+                               target="_blank" 
+                               rel="noreferrer"
+                               className="inline-flex items-center gap-2 px-4 py-2 bg-brand-50 text-brand-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-brand-100 transition-all border border-brand-100"
+                             >
+                               <ImageIcon size={14} /> Lihat Surat Dokter
+                             </a>
+                          </div>
+                        )}
 
                         {request.admin_note && (
                            <div className="bg-slate-50/50 border-2 border-dashed border-slate-200 rounded-[2rem] p-6 mt-4 animate-in fade-in slide-in-from-top-2 duration-500">

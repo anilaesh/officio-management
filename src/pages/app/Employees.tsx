@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
 import { useAuth } from '../../lib/AuthContext';
 import { supabase } from '../../lib/supabase';
 import { 
@@ -15,23 +15,35 @@ import {
   X,
   CheckCircle2,
   Edit2,
-  Trash2
+  Trash2,
+  FileDown,
+  Upload,
+  UserPlus,
+  Crown
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 export default function EmployeesPage() {
-  const { user, profile } = useAuth();
+  const { user, profile, isDemo, loading: authLoading } = useAuth();
   
   // Static check for demo mode
-  const isDemoInitial = !import.meta.env.VITE_SUPABASE_URL || 
+  const isDemoInitial = isDemo || !import.meta.env.VITE_SUPABASE_URL || 
                         import.meta.env.VITE_SUPABASE_URL.includes('your-project-url') ||
                         import.meta.env.VITE_SUPABASE_URL.includes('placeholder') ||
                         import.meta.env.VITE_SUPABASE_URL === '';
 
   const [effectivelyDemo, setEffectivelyDemo] = useState(isDemoInitial);
+
+  // Sync effectivelyDemo with isDemo from context
+  useEffect(() => {
+    if (isDemo) setEffectivelyDemo(true);
+  }, [isDemo]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalType, setModalType] = useState<'form' | 'import'>('form');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [importData, setImportData] = useState<any[]>([]);
   const [editingEmployee, setEditingEmployee] = useState<any>(null);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,10 +57,12 @@ export default function EmployeesPage() {
   });
 
   useEffect(() => {
-    fetchEmployees();
+    if (!authLoading) {
+      fetchEmployees();
+    }
 
     const handleSync = (event: MessageEvent) => {
-      if (event.data?.type === 'REFRESH_EMPLOYEES') {
+      if (event.data?.type === 'REFRESH_EMPLOYEES' && !authLoading) {
         fetchEmployees();
       }
     };
@@ -68,7 +82,7 @@ export default function EmployeesPage() {
 
   async function fetchEmployees() {
     setLoading(true);
-    if (effectivelyDemo) {
+    if (effectivelyDemo || isDemo) {
       const stored = localStorage.getItem('officio_demo_employees');
       if (stored) {
         setEmployees(JSON.parse(stored));
@@ -91,7 +105,7 @@ export default function EmployeesPage() {
       // Add a timeout fallback for database fetch
       const fetchPromise = supabase.from('profiles').select('*').order('full_name');
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Fetch timeout')), 10000)
+        setTimeout(() => reject(new Error('Fetch timeout')), 4000)
       );
 
       const { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any;
@@ -259,6 +273,96 @@ export default function EmployeesPage() {
     setEditingEmployee(null);
     setFormData({ name: '', role: 'employee', position: '', contact: '', email: '' });
     setFormError(null);
+    setImportData([]);
+    setModalType('form');
+  };
+
+  const downloadTemplate = () => {
+    const template = [
+      { 'Nama Lengkap': 'Andi Pratama', 'Email': 'andi@officio.com', 'Jabatan': 'HR Manager', 'Akses': 'admin', 'Telepon': '0812-3456-7890' },
+      { 'Nama Lengkap': 'Budi Santoso', 'Email': 'budi@officio.com', 'Jabatan': 'Frontend Developer', 'Akses': 'employee', 'Telepon': '0812-9876-5432' }
+    ];
+    
+    const ws = XLSX.utils.json_to_sheet(template);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template Karyawan");
+    XLSX.writeFile(wb, "Template_Karyawan_OfficeFlow.xlsx");
+  };
+
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws);
+      setImportData(data);
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const processImport = async () => {
+    if (importData.length === 0) return;
+    setIsSubmitting(true);
+    
+    try {
+      const formattedData = importData.map(row => ({
+        full_name: row['Nama Lengkap'] || row['full_name'] || row['name'],
+        email: row['Email'] || row['email'],
+        position: row['Jabatan'] || row['position'] || 'Karyawan',
+        role: (row['Akses'] || row['role'] || 'employee').toLowerCase(),
+        phone: row['Telepon'] || row['phone'] || row['contact'] || '-'
+      })).filter(emp => emp.email && emp.full_name);
+
+      if (effectivelyDemo) {
+        const stored = localStorage.getItem('officio_demo_employees');
+        let current = stored ? JSON.parse(stored) : [];
+        
+        const newData = formattedData.map(emp => ({
+          id: `emp-${Date.now()}-${Math.random().toString(16).substring(2, 10)}`,
+          name: emp.full_name,
+          email: emp.email,
+          position: emp.position,
+          role: emp.role,
+          contact: emp.phone
+        }));
+        
+        const updatedList = [...newData, ...current];
+        localStorage.setItem('officio_demo_employees', JSON.stringify(updatedList));
+        
+        setEmployees(updatedList);
+        const channel = new BroadcastChannel('officio_demo_sync');
+        channel.postMessage({ type: 'REFRESH_EMPLOYEES' });
+        setTimeout(() => channel.close(), 100);
+      } else {
+        const insertBatch = formattedData.map(emp => ({
+          id: crypto.randomUUID?.() || `emp-${Date.now()}-${Math.random()}`,
+          full_name: emp.full_name,
+          email: emp.email,
+          position: emp.position,
+          role: emp.role,
+          phone: emp.phone,
+          updated_at: new Date().toISOString()
+        }));
+
+        const { error } = await supabase.from('profiles').insert(insertBatch);
+        if (error) throw error;
+        fetchEmployees();
+      }
+      
+      handleCloseModal();
+      setShowSuccessToast(true);
+      setTimeout(() => setShowSuccessToast(false), 3000);
+    } catch (err: any) {
+      console.error('Import failed:', err);
+      alert('Gagal mengimport data: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleEdit = (emp: any) => {
@@ -329,17 +433,73 @@ export default function EmployeesPage() {
           <p className="text-gray-500 font-medium">Manajemen seluruh personil dan hak akses platform.</p>
         </div>
         {profile?.role === 'admin' && (
-          <button 
-            type="button"
-            onClick={() => {
-              handleCloseModal();
-              setIsModalOpen(true);
-            }}
-            className="flex items-center gap-2 bg-brand-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-brand-700 transition-all shadow-lg shadow-brand-100"
-          >
-            <Plus className="h-5 w-5" /> Tambah Karyawan
-          </button>
+          <div className="flex gap-2">
+            <button 
+                type="button"
+                onClick={downloadTemplate}
+                className="flex items-center gap-2 bg-white border border-office-border text-slate-700 px-4 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm group"
+                title="Unduh Template Excel"
+            >
+                <FileDown className="h-5 w-5 text-slate-400 group-hover:text-slate-600" />
+                <span className="hidden sm:inline">Template</span>
+            </button>
+            <button 
+                type="button"
+                onClick={() => {
+                    handleCloseModal();
+                    setModalType('import');
+                    setIsModalOpen(true);
+                }}
+                className="flex items-center gap-2 bg-white border border-office-border text-slate-700 px-4 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm group"
+                title="Import Excel"
+            >
+                <Upload className="h-5 w-5 text-slate-400 group-hover:text-slate-600" />
+                <span className="hidden sm:inline">Import</span>
+            </button>
+            <button 
+              type="button"
+              onClick={() => {
+                handleCloseModal();
+                setModalType('form');
+                setIsModalOpen(true);
+              }}
+              className="flex items-center gap-2 bg-brand-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-brand-700 transition-all shadow-lg shadow-brand-100"
+            >
+              <Plus className="h-5 w-5" /> <span className="hidden sm:inline">Tambah Karyawan</span><span className="sm:hidden">Tambah</span>
+            </button>
+          </div>
         )}
+      </div>
+
+      {/* Stats Summary */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-top-4 duration-500">
+        <div className="bg-white p-6 rounded-[2rem] border border-office-border flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
+           <div className="bg-brand-50 p-4 rounded-2xl text-brand-600">
+              <Users className="h-7 w-7" />
+           </div>
+           <div>
+              <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Total Personil</p>
+              <p className="text-3xl font-black text-slate-900 tracking-tight">{employees.length} Orang</p>
+           </div>
+        </div>
+        <div className="bg-white p-6 rounded-[2rem] border border-office-border flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
+           <div className="bg-office-slate-800 p-4 rounded-2xl text-white">
+              <Crown className="h-7 w-7" />
+           </div>
+           <div>
+              <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Administrator</p>
+              <p className="text-3xl font-black text-slate-900 tracking-tight">{employees.filter(e => e.role === 'admin').length} Akun</p>
+           </div>
+        </div>
+        <div className="bg-white p-6 rounded-[2rem] border border-office-border flex items-center gap-4 shadow-sm hover:shadow-md transition-shadow">
+           <div className="bg-brand-50 p-4 rounded-2xl text-brand-600">
+              <UserPlus className="h-7 w-7" />
+           </div>
+           <div>
+              <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Karyawan Aktif</p>
+              <p className="text-3xl font-black text-slate-900 tracking-tight">{employees.filter(e => e.role !== 'admin').length} Orang</p>
+           </div>
+        </div>
       </div>
 
       {/* Add/Edit Modal */}
@@ -349,218 +509,285 @@ export default function EmployeesPage() {
           <div className="relative bg-white rounded-[2rem] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="bg-office-gray p-8 border-b border-office-border flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-black text-gray-900 tracking-tight">{editingEmployee ? 'Edit Karyawan' : 'Tambah Karyawan Baru'}</h2>
-                <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Informasi Personil</p>
+                <h2 className="text-xl font-black text-gray-900 tracking-tight">
+                    {modalType === 'import' ? 'Import Data Karyawan' : (editingEmployee ? 'Edit Karyawan' : 'Tambah Karyawan Baru')}
+                </h2>
+                <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">
+                    {modalType === 'import' ? 'Excel / CSV' : 'Informasi Personil'}
+                </p>
               </div>
               <button type="button" onClick={handleCloseModal} className="p-2 hover:bg-white rounded-full transition-colors">
                 <X className="h-6 w-6 text-slate-400" />
               </button>
             </div>
             
-            <form onSubmit={handleSubmit} className="p-8 space-y-5" id="employee-form">
-              {formError && (
-                <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold border border-red-100 animate-in fade-in slide-in-from-top-2">
-                  {formError}
+            <div className="p-8">
+              {modalType === 'import' ? (
+                <div className="space-y-6">
+                    <div className="bg-brand-50 p-6 rounded-[2rem] border border-brand-100 text-center">
+                        <Upload className="h-12 w-12 text-brand-600 mx-auto mb-4" />
+                        <h3 className="text-lg font-black text-brand-900 tracking-tight">Unggah File Excel</h3>
+                        <p className="text-sm font-medium text-brand-700 mt-2 mb-6 text-balance">
+                            Pastikan file Anda memiliki kolom: <br/> 
+                            <span className="font-bold">Nama Lengkap, Email, Jabatan, Akses, Telepon</span>
+                        </p>
+                        <input 
+                            type="file" 
+                            accept=".xlsx, .xls, .csv" 
+                            onChange={handleFileUpload}
+                            className="block w-full text-sm text-slate-500 file:mr-4 file:py-3 file:px-6 file:rounded-xl file:border-0 file:text-xs file:font-black file:uppercase file:bg-brand-600 file:text-white hover:file:bg-brand-700 transition-all cursor-pointer"
+                        />
+                    </div>
+
+                    {importData.length > 0 && (
+                        <div className="space-y-4">
+                            <div className="bg-white p-4 rounded-2xl border border-office-border max-h-40 overflow-y-auto shadow-inner">
+                                <table className="w-full text-[10px] text-left">
+                                    <thead className="bg-white sticky top-0 border-b">
+                                        <tr>
+                                            <th className="pb-2 font-black uppercase text-slate-400">Nama</th>
+                                            <th className="pb-2 font-black uppercase text-slate-400">Email</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {importData.slice(0, 5).map((row, idx) => (
+                                            <tr key={idx}>
+                                                <td className="py-2 font-bold text-slate-700">{row['Nama Lengkap'] || row['full_name'] || '---'}</td>
+                                                <td className="py-2 text-slate-500">{row['Email'] || row['email'] || '---'}</td>
+                                            </tr>
+                                        ))}
+                                        {importData.length > 5 && (
+                                            <tr><td colSpan={2} className="py-2 text-center text-slate-400 italic">...dan {importData.length - 5} lainnya</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                            <button 
+                                onClick={processImport}
+                                disabled={isSubmitting}
+                                className="w-full bg-brand-600 text-white font-black uppercase tracking-tight py-4 rounded-2xl hover:bg-brand-700 transition-all shadow-lg shadow-brand-100 disabled:opacity-50 active:scale-95 flex items-center justify-center gap-2"
+                            >
+                                {isSubmitting ? (
+                                    <>
+                                        <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                        <span>Memproses...</span>
+                                    </>
+                                ) : (
+                                    <span>Konfirmasi Import {importData.length} Karyawan</span>
+                                )}
+                            </button>
+                        </div>
+                    )}
                 </div>
+              ) : (
+                <form onSubmit={handleSubmit} className="space-y-5" id="employee-form">
+                    {formError && (
+                        <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold border border-red-100 animate-in fade-in slide-in-from-top-2">
+                        {formError}
+                        </div>
+                    )}
+                    
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Nama Lengkap</label>
+                        <input 
+                        type="text"
+                        required
+                        value={formData.name}
+                        onChange={e => {
+                            setFormData({...formData, name: e.target.value});
+                            if (formError) setFormError(null);
+                        }}
+                        className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
+                        placeholder="Contoh: Budi Santoso"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Jabatan</label>
+                        <input 
+                            type="text"
+                            required
+                            value={formData.position}
+                            onChange={e => {
+                            setFormData({...formData, position: e.target.value});
+                            if (formError) setFormError(null);
+                            }}
+                            className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
+                            placeholder="Contoh: Designer"
+                        />
+                        </div>
+                        <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Role Akses</label>
+                        <select 
+                            value={formData.role}
+                            onChange={e => setFormData({...formData, role: e.target.value})}
+                            className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none transition-all"
+                        >
+                            <option value="employee">Employee</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Email Perusahaan</label>
+                        <input 
+                        type="email"
+                        required
+                        value={formData.email}
+                        onChange={e => {
+                            setFormData({...formData, email: e.target.value});
+                            if (formError) setFormError(null);
+                        }}
+                        className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
+                        placeholder="email@officio.com"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Nomor Telepon</label>
+                        <input 
+                        type="tel"
+                        value={formData.contact}
+                        onChange={e => {
+                            setFormData({...formData, contact: e.target.value});
+                            if (formError) setFormError(null);
+                        }}
+                        className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
+                        placeholder="0812xxxx"
+                        />
+                    </div>
+
+                    <div className="pt-4 flex gap-3">
+                        <button 
+                        type="button"
+                        onClick={handleCloseModal}
+                        className="flex-1 px-4 py-4 rounded-xl font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all active:scale-95"
+                        >
+                        Batal
+                        </button>
+                        <button 
+                        id="submit-employee-btn"
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="flex-1 px-4 py-4 rounded-xl font-bold bg-black text-white hover:bg-slate-800 transition-all shadow-lg shadow-black/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-95"
+                        >
+                        {isSubmitting ? (
+                            <>
+                            <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            <span>Memproses...</span>
+                            </>
+                        ) : (
+                            editingEmployee ? 'Simpan Perubahan' : 'Tambah Karyawan'
+                        )}
+                        </button>
+                    </div>
+                </form>
               )}
-              
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Nama Lengkap</label>
-                <input 
-                  type="text"
-                  value={formData.name}
-                  onChange={e => {
-                    setFormData({...formData, name: e.target.value});
-                    if (formError) setFormError(null);
-                  }}
-                  className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
-                  placeholder="Contoh: Budi Santoso"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Jabatan</label>
-                  <input 
-                    type="text"
-                    value={formData.position}
-                    onChange={e => {
-                      setFormData({...formData, position: e.target.value});
-                      if (formError) setFormError(null);
-                    }}
-                    className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
-                    placeholder="Contoh: Designer"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Role Akses</label>
-                  <select 
-                    value={formData.role}
-                    onChange={e => setFormData({...formData, role: e.target.value})}
-                    className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none transition-all"
-                  >
-                    <option value="employee">Employee</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Email Perusahaan</label>
-                <input 
-                  type="email"
-                  value={formData.email}
-                  onChange={e => {
-                    setFormData({...formData, email: e.target.value});
-                    if (formError) setFormError(null);
-                  }}
-                  className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
-                  placeholder="email@officio.com"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Nomor Telepon</label>
-                <input 
-                  type="tel"
-                  value={formData.contact}
-                  onChange={e => {
-                    setFormData({...formData, contact: e.target.value});
-                    if (formError) setFormError(null);
-                  }}
-                  className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 transition-all"
-                  placeholder="0812xxxx"
-                />
-              </div>
-
-              <div className="pt-4 flex gap-3">
-                <button 
-                  type="button"
-                  onClick={handleCloseModal}
-                  className="flex-1 px-4 py-4 rounded-xl font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all active:scale-95"
-                >
-                  Batal
-                </button>
-                <button 
-                  id="submit-employee-btn"
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-4 rounded-xl font-bold bg-black text-white hover:bg-slate-800 transition-all shadow-lg shadow-black/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-95"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      <span>Memproses...</span>
-                    </>
-                  ) : (
-                    editingEmployee ? 'Simpan Perubahan' : 'Tambah Karyawan'
-                  )}
-                </button>
-              </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
 
-      <div className="bg-white rounded-3xl border border-office-border shadow-sm overflow-hidden">
-        <div className="p-8 border-b border-office-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="relative flex-1 max-w-md">
-             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+      <div className="bg-white rounded-[2.5rem] border border-office-border shadow-sm overflow-hidden mb-safe">
+        <div className="p-8 lg:px-10 border-b border-office-border flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="relative flex-1 max-w-md w-full">
+             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-300" />
              <input 
                 type="text" 
                 placeholder="Cari nama atau jabatan..." 
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-office-gray border border-office-border rounded-xl text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none transition-all"
+                className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none transition-all placeholder:text-slate-300"
              />
           </div>
           <div className="flex gap-2">
-            <button className="flex items-center gap-2 px-4 py-3 border border-office-border rounded-xl hover:bg-gray-50 transition-colors font-bold text-gray-600 text-xs uppercase tracking-widest">
+            <button className="flex-1 md:flex-none flex items-center justify-center gap-2 h-12 px-6 bg-slate-50 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all active:scale-95">
               <Filter className="h-4 w-4" /> Filter
             </button>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
+        {/* Tablet/Desktop Table View */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-left">
             <thead>
-              <tr className="bg-office-gray">
-                <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-[10px]">Informasi Karyawan</th>
-                <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-[10px]">Jabatan</th>
-                <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-[10px]">Role</th>
-                <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-[10px]">Kontak</th>
-                <th className="px-8 py-4"></th>
+              <tr className="bg-slate-50/50">
+                <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Informasi Karyawan</th>
+                <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Jabatan</th>
+                <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Role</th>
+                <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Kontak</th>
+                <th className="px-10 py-5"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-office-border text-sm">
               {loading ? (
-                <tr>
-                  <td colSpan={5} className="px-8 py-20 text-center">
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="h-10 w-10 border-4 border-brand-200 border-t-brand-600 rounded-full animate-spin"></div>
-                      <p className="text-slate-400 font-bold">Memuat data...</p>
-                    </div>
-                  </td>
-                </tr>
+                Array.from({ length: 5 }).map((_, i) => (
+                  <tr key={`skeleton-${i}`} className="animate-pulse">
+                    <td className="px-10 py-6 h-24"><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
+                    <td colSpan={4}></td>
+                  </tr>
+                ))
               ) : filteredEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-8 py-20 text-center text-slate-400 font-bold">
+                  <td colSpan={5} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
                     Tidak ada data karyawan ditemukan.
                   </td>
                 </tr>
               ) : filteredEmployees.map((emp) => (
-                <tr key={emp.id} className="hover:bg-gray-50/80 transition-colors group">
-                  <td className="px-8 py-5">
-                    <div className="flex items-center gap-3">
-                       <div className="h-12 w-12 rounded-2xl bg-brand-100 flex items-center justify-center text-brand-600 font-black text-lg transition-transform group-hover:scale-110">
+                <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-10 py-6">
+                    <div className="flex items-center gap-4">
+                       <div className="h-14 w-14 rounded-[1.25rem] bg-brand-50 flex items-center justify-center text-brand-600 font-black text-xl transition-transform group-hover:scale-110">
                           {emp.name.charAt(0)}
                        </div>
                        <div>
-                          <p className="font-bold text-gray-900">{emp.name}</p>
-                          <p className="text-xs text-gray-400 font-medium">{emp.email}</p>
+                          <p className="font-black text-slate-900 text-base leading-none tracking-tight">{emp.name}</p>
+                          <p className="text-[11px] text-slate-400 font-bold mt-1.5 uppercase tracking-widest">{emp.email}</p>
                        </div>
                     </div>
                   </td>
-                  <td className="px-8 py-5">
-                    <div className="flex items-center gap-2 text-gray-600 font-bold">
+                  <td className="px-10 py-6">
+                    <div className="flex items-center gap-2 text-slate-600 font-black">
                        <Briefcase className="h-4 w-4 text-brand-400" />
                        {emp.position}
                     </div>
                   </td>
-                  <td className="px-8 py-5">
-                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
-                      emp.role === 'admin' ? "bg-office-slate-800 text-white" : "bg-gray-100 text-gray-500"
+                  <td className="px-10 py-6">
+                    <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                      emp.role === 'admin' ? "bg-office-slate-800 text-white" : "bg-slate-100 text-slate-500"
                     }`}>
-                      {emp.role === 'admin' ? <ShieldCheck className="h-3 w-3" /> : <UserCheck className="h-3 w-3" />}
+                      {emp.role === 'admin' ? <ShieldCheck size={12} /> : <UserCheck size={12} />}
                       {emp.role}
                     </span>
                   </td>
-                  <td className="px-8 py-5">
-                    <div className="space-y-1">
-                       <div className="flex items-center gap-2 text-xs text-gray-500 font-semibold italic">
-                          <Phone className="h-3 w-3 text-brand-500" /> {emp.contact}
+                  <td className="px-10 py-6">
+                    <div className="space-y-1.5">
+                       <div className="flex items-center gap-2 text-[11px] text-slate-500 font-bold">
+                          <Phone size={12} className="text-brand-500" /> {emp.contact}
                        </div>
-                       <div className="flex items-center gap-2 text-xs text-gray-500 font-semibold">
-                          <Mail className="h-3 w-3 text-brand-500" /> {emp.email}
+                       <div className="flex items-center gap-2 text-[11px] text-slate-500 font-bold">
+                          <Mail size={12} className="text-brand-500" /> {emp.email}
                        </div>
                     </div>
                   </td>
-                  <td className="px-8 py-5 text-right">
+                  <td className="px-10 py-6 text-right">
                     {profile?.role === 'admin' && (
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button 
                           onClick={() => handleEdit(emp)}
-                          className="p-2.5 hover:bg-brand-50 text-brand-600 rounded-xl transition-all hover:scale-110"
+                          className="p-3 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
                           title="Edit"
                         >
-                           <Edit2 className="h-4 w-4" />
+                           <Edit2 size={18} />
                         </button>
                         <button 
                           onClick={() => handleDelete(emp.id)}
-                          className="p-2.5 hover:bg-red-50 text-red-600 rounded-xl transition-all hover:scale-110"
+                          className="p-3 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
                           title="Hapus"
                         >
-                           <Trash2 className="h-4 w-4" />
+                           <Trash2 size={18} />
                         </button>
                       </div>
                     )}
@@ -569,6 +796,82 @@ export default function EmployeesPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile Card View (Employees) */}
+        <div className="md:hidden divide-y divide-office-border">
+          {loading ? (
+             [...Array(3)].map((_, i) => (
+                <div key={i} className="p-6 space-y-4 animate-pulse">
+                   <div className="flex items-center gap-4">
+                      <div className="h-14 w-14 bg-slate-100 rounded-2xl"></div>
+                      <div className="space-y-2">
+                         <div className="h-6 w-32 bg-slate-100 rounded"></div>
+                         <div className="h-4 w-48 bg-slate-100 rounded"></div>
+                      </div>
+                   </div>
+                   <div className="h-12 w-full bg-slate-50 rounded-2xl"></div>
+                </div>
+             ))
+          ) : filteredEmployees.length === 0 ? (
+             <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Tidak ada data karyawan.</div>
+          ) : filteredEmployees.map((emp) => (
+             <div key={emp.id} className="p-6 bg-white active:bg-slate-50 transition-all space-y-4">
+                <div className="flex items-start justify-between">
+                   <div className="flex items-center gap-4">
+                      <div className="h-16 w-16 rounded-2xl bg-brand-100 flex items-center justify-center text-brand-600 font-black text-2xl">
+                         {emp.name.charAt(0)}
+                      </div>
+                      <div>
+                         <h3 className="font-black text-slate-900 text-lg leading-none tracking-tight mb-2">{emp.name}</h3>
+                         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                           emp.role === 'admin' ? "bg-office-slate-800 text-white" : "bg-slate-100 text-slate-500"
+                         }`}>
+                           {emp.role === 'admin' ? <ShieldCheck size={10} /> : <UserCheck size={10} />}
+                           {emp.role}
+                         </span>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                   <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <Briefcase className="h-5 w-5 text-brand-500" />
+                      <div>
+                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Jabatan</p>
+                         <p className="font-bold text-slate-700 text-sm">{emp.position}</p>
+                      </div>
+                   </div>
+                   <div className="flex flex-col gap-2 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <div className="flex items-center gap-2">
+                         <Mail size={14} className="text-brand-500" />
+                         <span className="text-xs font-bold text-slate-600 truncate">{emp.email}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                         <Phone size={14} className="text-brand-500" />
+                         <span className="text-xs font-bold text-slate-600">{emp.contact}</span>
+                      </div>
+                   </div>
+                </div>
+
+                {profile?.role === 'admin' && (
+                   <div className="flex gap-2 pt-2">
+                      <button 
+                         onClick={() => handleEdit(emp)}
+                         className="flex-1 flex items-center justify-center gap-2 py-4 bg-office-gray text-slate-600 rounded-2xl text-[11px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                      >
+                         <Edit2 size={16} /> Edit Profile
+                      </button>
+                      <button 
+                         onClick={() => handleDelete(emp.id)}
+                         className="p-4 bg-rose-50 text-rose-500 rounded-2xl active:scale-95 transition-all"
+                      >
+                         <Trash2 size={18} />
+                      </button>
+                   </div>
+                )}
+             </div>
+          ))}
         </div>
       </div>
     </div>

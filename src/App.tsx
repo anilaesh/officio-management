@@ -11,6 +11,7 @@ import Inventory from './pages/app/Inventory';
 import LeaveRequests from './pages/app/LeaveRequests';
 import Employees from './pages/app/Employees';
 import ProfilePage from './pages/app/Profile';
+import Reports from './pages/app/Reports';
 
 function ProtectedRoute({ children, adminOnly = false }: { children: React.ReactNode, adminOnly?: boolean }) {
   const { user, profile, loading } = useAuth();
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="inventory" element={<Inventory />} />
             <Route path="leave" element={<LeaveRequests />} />
             <Route path="profile" element={<ProfilePage />} />
+            <Route path="reports" element={<Reports />} />
             
             {/* Admin Only Routes */}
             <Route path="employees" element={

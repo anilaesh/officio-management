@@ -208,13 +208,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-2 gap-3">
-              <button
-                onClick={() => handleDemoLogin('admin')}
-                className="w-full inline-flex justify-center py-2.5 px-4 border border-gray-300 rounded-xl shadow-sm bg-white text-xs font-bold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500 transition-all"
-              >
-                Demo Admin
-              </button>
+            <div className="mt-6">
               <button
                 onClick={() => handleDemoLogin('employee')}
                 className="w-full inline-flex justify-center py-2.5 px-4 border border-gray-300 rounded-xl shadow-sm bg-white text-xs font-bold text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-brand-500 transition-all"

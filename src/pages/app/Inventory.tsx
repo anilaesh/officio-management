@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
 import { useAuth } from '../../lib/AuthContext';
 import { supabase, InventoryItem, InventoryRequest, InventoryRequestType } from '../../lib/supabase';
 import { 
@@ -20,25 +20,33 @@ import {
   X,
   MessageSquare,
   Edit2,
-  Trash2
+  Trash2,
+  FileDown,
+  Upload
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
 import { cn } from '../../lib/utils';
+import * as XLSX from 'xlsx';
 
 type ActiveTab = 'items' | 'requests' | 'my-requests';
-type ModalType = 'add-item' | 'borrow' | 'report-damage' | 'request-new' | 'request-detail';
+type ModalType = 'add-item' | 'borrow' | 'report-damage' | 'request-new' | 'request-detail' | 'import-excel';
 
 export default function InventoryPage() {
-  const { profile, isDemo, user } = useAuth();
+  const { profile, isDemo, user, loading: authLoading } = useAuth();
   
   // Static check for demo mode
-  const isDemoInitial = !import.meta.env.VITE_SUPABASE_URL || 
+  const isDemoInitial = isDemo || !import.meta.env.VITE_SUPABASE_URL || 
                         import.meta.env.VITE_SUPABASE_URL.includes('your-project-url') ||
                         import.meta.env.VITE_SUPABASE_URL.includes('placeholder') ||
                         import.meta.env.VITE_SUPABASE_URL === '';
 
   const [effectivelyDemo, setEffectivelyDemo] = useState(isDemoInitial);
+
+  // Sync effectivelyDemo with isDemo from context
+  useEffect(() => {
+    if (isDemo) setEffectivelyDemo(true);
+  }, [isDemo]);
   const [activeTab, setActiveTab] = useState<ActiveTab>('items');
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [requests, setRequests] = useState<InventoryRequest[]>([]);
@@ -51,6 +59,7 @@ export default function InventoryPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState<{show: boolean, message: string}>({ show: false, message: '' });
+  const [importData, setImportData] = useState<any[]>([]);
   
   // Form States
   const [itemFormData, setItemFormData] = useState({
@@ -71,11 +80,13 @@ export default function InventoryPage() {
   const [adminNote, setAdminNote] = useState('');
 
   useEffect(() => {
-    fetchItems();
-    fetchRequests();
+    if (!authLoading) {
+      fetchItems();
+      fetchRequests();
+    }
 
     const handleSync = (event: MessageEvent) => {
-      if (event.data?.type === 'REFRESH_INVENTORY' || event.data?.type === 'REFRESH_REQUESTS') {
+      if ((event.data?.type === 'REFRESH_INVENTORY' || event.data?.type === 'REFRESH_REQUESTS') && !authLoading) {
         fetchItems();
         fetchRequests();
       }
@@ -89,7 +100,7 @@ export default function InventoryPage() {
 
   async function fetchItems() {
     setLoading(true);
-    if (effectivelyDemo) {
+    if (effectivelyDemo || isDemo) {
       const stored = localStorage.getItem('officio_demo_inventory');
       if (stored) {
         setItems(JSON.parse(stored));
@@ -111,7 +122,7 @@ export default function InventoryPage() {
     try {
       const fetchPromise = supabase.from('inventory').select('*').order('updated_at', { ascending: false });
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Fetch timeout')), 10000)
+        setTimeout(() => reject(new Error('Fetch timeout')), 4000)
       );
 
       const { data, error } = await Promise.race([fetchPromise, timeoutPromise]) as any;
@@ -135,7 +146,7 @@ export default function InventoryPage() {
   }
 
   async function fetchRequests() {
-    if (effectivelyDemo) {
+    if (effectivelyDemo || isDemo) {
       const stored = localStorage.getItem('officio_demo_inventory_requests');
       if (stored) {
         setRequests(JSON.parse(stored));
@@ -386,6 +397,77 @@ export default function InventoryPage() {
     }
   };
 
+  const downloadTemplate = () => {
+    const template = [
+      { 'Nama Barang': 'Laptop Macbook Air M2', 'Jumlah': 10, 'Kondisi': 'Baik', 'Lokasi': 'Gudang IT' },
+      { 'Nama Barang': 'Monitor LG 24"', 'Jumlah': 5, 'Kondisi': 'Baik', 'Lokasi': 'Gudang IT' }
+    ];
+    
+    const ws = XLSX.utils.json_to_sheet(template);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template Inventaris");
+    XLSX.writeFile(wb, "Template_Inventaris_OfficeFlow.xlsx");
+  };
+
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const bstr = evt.target?.result;
+      const wb = XLSX.read(bstr, { type: 'binary' });
+      const wsname = wb.SheetNames[0];
+      const ws = wb.Sheets[wsname];
+      const data = XLSX.utils.sheet_to_json(ws);
+      setImportData(data);
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const processImport = async () => {
+    if (importData.length === 0) return;
+    setIsSubmitting(true);
+    
+    try {
+      const formattedData = importData.map(row => ({
+        name: row['Nama Barang'] || row['name'] || row['Nama'],
+        quantity: parseInt(row['Jumlah'] || row['quantity'] || row['Qty'] || 0),
+        condition: row['Kondisi'] || row['condition'] || 'Baik',
+        location: row['Lokasi'] || row['location'] || 'Gudang IT',
+        updated_at: new Date().toISOString()
+      })).filter(item => item.name);
+
+      if (effectivelyDemo) {
+        const stored = localStorage.getItem('officio_demo_inventory');
+        let current = stored ? JSON.parse(stored) : [];
+        
+        const newData = formattedData.map(item => ({
+          id: Math.random().toString(36).substr(2, 9),
+          ...item
+        }));
+        
+        current = [...newData, ...current];
+        localStorage.setItem('officio_demo_inventory', JSON.stringify(current));
+        new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_INVENTORY' });
+        toast(`${newData.length} Barang berhasil diimport!`);
+      } else {
+        const { error } = await supabase.from('inventory').insert(formattedData);
+        if (error) throw error;
+        toast(`${formattedData.length} Barang berhasil diimport!`);
+      }
+      
+      setModalType(null);
+      setImportData([]);
+      await fetchItems();
+    } catch (err) {
+      console.error(err);
+      toast('Gagal mengimport data. Pastikan format kolom benar.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const resetRequestForm = () => {
     setRequestFormData({
       item_id: '',
@@ -440,12 +522,33 @@ export default function InventoryPage() {
               </button>
             )}
             {profile?.role === 'admin' && (
-            <button 
-                onClick={() => setModalType('add-item')}
-                className="flex items-center gap-2 bg-brand-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-brand-700 transition-all shadow-lg shadow-brand-100"
-            >
-                <Package className="h-5 w-5" /> Tambah Barang
-            </button>
+              <div className="flex gap-2">
+                <button 
+                    onClick={downloadTemplate}
+                    className="flex items-center gap-2 bg-white border border-office-border text-slate-700 px-4 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm group"
+                    title="Unduh Template Excel"
+                >
+                    <FileDown className="h-5 w-5 text-slate-400 group-hover:text-slate-600" /> 
+                    <span className="hidden sm:inline">Template</span>
+                </button>
+                <button 
+                    onClick={() => {
+                        setImportData([]);
+                        setModalType('import-excel');
+                    }}
+                    className="flex items-center gap-2 bg-white border border-office-border text-slate-700 px-4 py-2.5 rounded-xl font-bold hover:bg-slate-50 transition-all shadow-sm group"
+                    title="Import dari Excel"
+                >
+                    <Upload className="h-5 w-5 text-slate-400 group-hover:text-slate-600" />
+                    <span className="hidden sm:inline">Import Excel</span>
+                </button>
+                <button 
+                    onClick={() => setModalType('add-item')}
+                    className="flex items-center gap-2 bg-brand-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-brand-700 transition-all shadow-lg shadow-brand-100"
+                >
+                    <Package className="h-5 w-5" /> <span className="hidden sm:inline">Tambah Barang</span><span className="sm:hidden">Tambah</span>
+                </button>
+              </div>
             )}
         </div>
       </div>
@@ -504,71 +607,88 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-3xl border border-office-border shadow-sm overflow-hidden">
-            <div className="p-8 border-b border-office-border flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="relative flex-1 max-w-md">
-                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <div className="bg-white rounded-[2.5rem] border border-office-border shadow-sm overflow-hidden mb-safe">
+            <div className="p-8 lg:px-10 border-b border-office-border flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="relative flex-1 max-w-md w-full">
+                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-300" />
                  <input 
                     type="text" 
                     placeholder="Cari nama barang..." 
-                    className="w-full pl-10 pr-4 py-2 bg-office-gray border border-office-border rounded-xl text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none transition-all"
+                    className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-brand-500 focus:outline-none transition-all placeholder:text-slate-300"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                  />
               </div>
+              <div className="flex gap-2">
+                 <button className="flex-1 md:flex-none flex items-center justify-center gap-2 h-12 px-6 bg-slate-50 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all active:scale-95">
+                    <Filter size={16} /> Filter
+                 </button>
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
+            {/* Tablet/Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
-                  <tr className="bg-office-gray">
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Nama Barang</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs text-center">Tersedia</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Kondisi</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Lokasi</th>
-                    <th className="px-8 py-4"></th>
+                  <tr className="bg-slate-50/50">
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Nama Barang</th>
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px] text-center">Stok</th>
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Kondisi</th>
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Lokasi</th>
+                    <th className="px-10 py-5"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-office-border text-sm">
-                  {filteredItems.map((item) => (
-                    <tr key={item.id} className="hover:bg-gray-50/80 transition-colors">
-                      <td className="px-8 py-5">
-                        <div className="flex items-center gap-3">
-                           <div className="bg-brand-50 p-2 rounded-lg text-brand-600"><Package className="h-5 w-5" /></div>
-                           <span className="font-bold text-gray-900">{item.name}</span>
+                  {loading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={`skeleton-items-${i}`} className="animate-pulse">
+                        <td className="px-10 py-6 h-20"><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
+                        <td colSpan={4}></td>
+                      </tr>
+                    ))
+                  ) : filteredItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada data barang.</td>
+                    </tr>
+                  ) : filteredItems.map((item) => (
+                    <tr key={item.id} className="group hover:bg-slate-50/50 transition-colors">
+                      <td className="px-10 py-6">
+                        <div className="flex items-center gap-4">
+                           <div className="bg-brand-50 p-3 rounded-2xl text-brand-600 group-hover:scale-110 transition-transform"><Package size={20} /></div>
+                           <span className="font-black text-slate-900 text-base tracking-tight">{item.name}</span>
                         </div>
                       </td>
-                      <td className="px-8 py-5 text-center">
-                        <span className="font-black text-gray-700">{item.quantity}</span>
+                      <td className="px-10 py-6 text-center">
+                        <span className="font-black text-slate-700 bg-slate-100 px-3 py-1 rounded-lg">{item.quantity}</span>
                       </td>
-                      <td className="px-8 py-5">
+                      <td className="px-10 py-6">
                         <span className={cn(
-                          "px-3 py-1 rounded-full text-xs font-bold",
-                          item.condition === 'Baik' ? "bg-green-100 text-green-700" :
-                          item.condition === 'Rusak' ? "bg-rose-100 text-rose-700" :
-                          "bg-amber-100 text-amber-700"
+                          "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest",
+                          item.condition === 'Baik' ? "bg-emerald-50 text-emerald-600" :
+                          item.condition === 'Rusak' ? "bg-rose-50 text-rose-600" :
+                          "bg-amber-50 text-amber-600"
                         )}>
                           {item.condition}
                         </span>
                       </td>
-                      <td className="px-8 py-5">
-                        <span className="text-gray-600 font-medium">{item.location}</span>
+                      <td className="px-10 py-6">
+                        <span className="text-slate-500 font-bold">{item.location}</span>
                       </td>
-                      <td className="px-8 py-5 text-right">
-                        <div className="flex gap-2 justify-end">
+                      <td className="px-10 py-6 text-right">
+                        <div className="flex gap-3 justify-end opacity-0 group-hover:opacity-100 transition-opacity">
                             {profile?.role === 'admin' ? (
                               <>
                                 <button 
                                     onClick={() => handleEditItem(item)}
-                                    className="flex items-center gap-1.5 bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-colors cursor-pointer"
+                                    className="p-2.5 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"
                                 >
-                                    <Edit2 size={14} /> Edit
+                                    <Edit2 size={18} />
                                 </button>
                                 <button 
                                     onClick={() => setDeletingId(item.id)}
-                                    className="flex items-center gap-1.5 bg-rose-50 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+                                    className="p-2.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
                                 >
-                                    <Trash2 size={14} /> Hapus
+                                    <Trash2 size={18} />
                                 </button>
                               </>
                             ) : (
@@ -581,9 +701,9 @@ export default function InventoryPage() {
                                         setModalType('borrow');
                                     }}
                                     disabled={item.quantity === 0 || item.condition === 'Rusak'}
-                                    className="flex items-center gap-1.5 bg-office-slate-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-black transition-colors disabled:opacity-50"
+                                    className="px-5 py-2.5 bg-office-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-black transition-all active:scale-95 disabled:opacity-50"
                                 >
-                                    <History size={14} /> Pinjam
+                                    Pinjam
                                 </button>
                                 <button 
                                     onClick={() => {
@@ -592,9 +712,9 @@ export default function InventoryPage() {
                                         setRequestFormData(prev => ({ ...prev, item_id: item.id, item_name: item.name, type: 'report_damage' }));
                                         setModalType('report-damage');
                                     }}
-                                    className="flex items-center gap-1.5 bg-rose-50 text-rose-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-rose-100 transition-colors"
+                                    className="p-2.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
                                 >
-                                    <AlertTriangle size={14} /> Lapor
+                                    <AlertTriangle size={18} />
                                 </button>
                               </>
                             )}
@@ -605,35 +725,135 @@ export default function InventoryPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile Card View (Items) */}
+            <div className="md:hidden divide-y divide-office-border">
+               {loading ? (
+                  [...Array(3)].map((_, i) => (
+                     <div key={i} className="p-6 space-y-4 animate-pulse">
+                        <div className="flex items-center gap-4">
+                           <div className="h-12 w-12 bg-slate-100 rounded-2xl"></div>
+                           <div className="h-6 w-40 bg-slate-100 rounded"></div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                           <div className="h-10 bg-slate-50 rounded-xl"></div>
+                           <div className="h-10 bg-slate-50 rounded-xl"></div>
+                        </div>
+                     </div>
+                  ))
+               ) : filteredItems.length === 0 ? (
+                  <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada data barang.</div>
+               ) : filteredItems.map((item) => (
+                  <div key={item.id} className="p-6 bg-white active:bg-slate-50 transition-all space-y-4">
+                     <div className="flex items-start justify-between gap-4">
+                        <div className="flex items-start gap-4">
+                           <div className="bg-brand-50 p-3 rounded-2xl text-brand-600"><Package size={24} /></div>
+                           <div>
+                              <h3 className="font-black text-slate-900 text-lg leading-tight tracking-tight">{item.name}</h3>
+                              <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mt-1">{item.location}</p>
+                           </div>
+                        </div>
+                        <span className={cn(
+                          "whitespace-nowrap px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest",
+                          item.condition === 'Baik' ? "bg-emerald-50 text-emerald-600" :
+                          item.condition === 'Rusak' ? "bg-rose-50 text-rose-600" :
+                          "bg-amber-50 text-amber-600"
+                        )}>
+                          {item.condition}
+                        </span>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-3">
+                        <div className="flex items-center justify-between bg-slate-50 px-4 py-3 rounded-xl border border-slate-100">
+                           <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stok</span>
+                           <span className="text-lg font-black text-slate-900">{item.quantity}</span>
+                        </div>
+                     </div>
+
+                     <div className="flex gap-2 pt-2">
+                        {profile?.role === 'admin' ? (
+                           <>
+                              <button 
+                                 onClick={() => handleEditItem(item)}
+                                 className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-office-gray text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                              >
+                                 <Edit2 size={14} /> Edit
+                              </button>
+                              <button 
+                                 onClick={() => setDeletingId(item.id)}
+                                 className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-rose-50 text-rose-600 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                              >
+                                 <Trash2 size={14} /> Hapus
+                              </button>
+                           </>
+                        ) : (
+                           <>
+                              <button 
+                                 onClick={() => {
+                                     setSelectedItem(item);
+                                     resetRequestForm();
+                                     setRequestFormData(prev => ({ ...prev, item_id: item.id, item_name: item.name, type: 'borrow' }));
+                                     setModalType('borrow');
+                                 }}
+                                 disabled={item.quantity === 0 || item.condition === 'Rusak'}
+                                 className="flex-[2] py-4 bg-office-slate-800 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest active:scale-95 disabled:opacity-30"
+                              >
+                                 Pinjam Barang
+                              </button>
+                              <button 
+                                 onClick={() => {
+                                     setSelectedItem(item);
+                                     resetRequestForm();
+                                     setRequestFormData(prev => ({ ...prev, item_id: item.id, item_name: item.name, type: 'report_damage' }));
+                                     setModalType('report-damage');
+                                 }}
+                                 className="flex-1 flex items-center justify-center gap-2 py-4 bg-rose-50 text-rose-600 rounded-2xl text-[11px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                              >
+                                 <AlertTriangle size={16} /> Lapor
+                              </button>
+                           </>
+                        )}
+                     </div>
+                  </div>
+               ))}
+            </div>
           </div>
         </>
       ) : (
-        <div className="bg-white rounded-3xl border border-office-border shadow-sm overflow-hidden">
-             <div className="overflow-x-auto">
+        <div className="bg-white rounded-[2.5rem] border border-office-border shadow-sm overflow-hidden mb-safe">
+            {/* Tablet/Desktop Table View (Requests) */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
-                  <tr className="bg-office-gray">
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Tgl Pengajuan</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Tipe</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Barang</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Pemohon</th>
-                    <th className="px-8 py-4 font-bold text-gray-500 uppercase tracking-wider text-xs">Status</th>
-                    <th className="px-8 py-4"></th>
+                  <tr className="bg-slate-50/50">
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Tgl Pengajuan</th>
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Tipe</th>
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Barang</th>
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Pemohon</th>
+                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Status</th>
+                    <th className="px-10 py-5"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-office-border text-sm">
-                  {filteredRequests.length === 0 ? (
+                  {loading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={`skeleton-reqs-${i}`} className="animate-pulse">
+                        <td className="px-10 py-6 h-20"><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
+                        <td colSpan={5}></td>
+                      </tr>
+                    ))
+                  ) : filteredRequests.length === 0 ? (
                     <tr>
-                         <td colSpan={6} className="px-8 py-20 text-center text-gray-400 font-medium">Belum ada data permintaan.</td>
+                         <td colSpan={6} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada data permintaan.</td>
                     </tr>
                   ) : filteredRequests.map((req) => (
-                    <tr key={req.id} className="hover:bg-gray-50/80 transition-colors">
-                      <td className="px-8 py-5 font-medium text-gray-500">
+                    <tr key={req.id} className="group hover:bg-slate-50/50 transition-colors">
+                      <td className="px-10 py-6 font-bold text-slate-500">
                         {format(new Date(req.created_at), 'dd MMM yyyy')}
                       </td>
-                      <td className="px-8 py-5">
+                      <td className="px-10 py-6">
                          <span className={cn(
-                             "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider",
+                             "px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest",
                              req.type === 'borrow' ? "bg-blue-50 text-blue-600" :
                              req.type === 'new_item' ? "bg-indigo-50 text-indigo-600" :
                              "bg-rose-50 text-rose-600"
@@ -641,45 +861,105 @@ export default function InventoryPage() {
                              {req.type === 'borrow' ? 'Pinjam' : req.type === 'new_item' ? 'Request Baru' : 'Lapor Rusak'}
                          </span>
                       </td>
-                      <td className="px-8 py-5">
+                      <td className="px-10 py-6">
                         <div className="flex flex-col">
-                            <span className="font-bold text-gray-900">{req.item_name}</span>
-                            <span className="text-[10px] text-gray-400 font-bold">{req.quantity} Unit</span>
+                            <span className="font-black text-slate-900 tracking-tight">{req.item_name}</span>
+                            <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-0.5">{req.quantity} Unit</span>
                         </div>
                       </td>
-                      <td className="px-8 py-5">
-                        <div className="flex items-center gap-2">
-                             <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500"><User size={14}/></div>
-                             <span className="font-bold text-gray-700">{req.user_name}</span>
+                      <td className="px-10 py-6">
+                        <div className="flex items-center gap-3">
+                             <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 font-black">{req.user_name.charAt(0)}</div>
+                             <span className="font-bold text-slate-700">{req.user_name}</span>
                         </div>
                       </td>
-                      <td className="px-8 py-5">
+                      <td className="px-10 py-6">
                          <span className={cn(
-                             "flex items-center gap-1.5 font-black uppercase tracking-tighter text-[10px]",
-                             req.status === 'pending' ? "text-amber-500" :
-                             req.status === 'approved' ? "text-green-500" : "text-rose-500"
+                            "inline-flex items-center gap-2 font-black text-[10px] uppercase tracking-widest",
+                            req.status === 'pending' ? "text-amber-500" :
+                            req.status === 'approved' ? "text-emerald-500" :
+                            "text-rose-500"
                          )}>
-                             {req.status === 'pending' ? <Clock size={12}/> : req.status === 'approved' ? <Check size={12}/> : <X size={12}/>}
-                             {req.status === 'pending' ? 'Menunggu' : req.status === 'approved' ? 'Disetujui' : 'Ditolak'}
+                            <div className={cn("w-1.5 h-1.5 rounded-full", 
+                               req.status === 'pending' ? "bg-amber-500 animate-pulse" :
+                               req.status === 'approved' ? "bg-emerald-500" : "bg-rose-500"
+                            )}></div>
+                            {req.status === 'pending' ? 'Pending' : req.status === 'approved' ? 'Disetujui' : 'Ditolak'}
                          </span>
                       </td>
-                      <td className="px-8 py-5 text-right">
+                      <td className="px-10 py-6 text-right">
                          <button 
                             onClick={() => {
                                 setSelectedRequest(req);
                                 setAdminNote(req.admin_note || '');
                                 setModalType('request-detail');
                             }}
-                            className="bg-office-gray hover:bg-slate-200 p-2 rounded-lg transition-colors"
+                            className="p-3 bg-slate-50 text-slate-400 rounded-xl hover:bg-brand-50 hover:text-brand-600 transition-all opacity-0 group-hover:opacity-100"
                          >
-                            <ArrowUpRight size={16} />
+                            <ArrowUpRight size={18} />
                          </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-             </div>
+            </div>
+
+            {/* Mobile Card View (Requests) */}
+            <div className="md:hidden divide-y divide-office-border pb-safe">
+               {loading ? (
+                  [...Array(3)].map((_, i) => (
+                    <div key={i} className="p-6 space-y-4 animate-pulse">
+                       <div className="h-6 w-32 bg-slate-100 rounded"></div>
+                       <div className="h-10 w-full bg-slate-50 rounded-xl"></div>
+                    </div>
+                  ))
+               ) : filteredRequests.length === 0 ? (
+                  <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Tidak ada permintaan.</div>
+               ) : filteredRequests.map((req) => (
+                  <div key={req.id} onClick={() => {
+                      setSelectedRequest(req);
+                      setAdminNote(req.admin_note || '');
+                      setModalType('request-detail');
+                  }} className="p-6 bg-white active:bg-slate-50 transition-all space-y-4">
+                     <div className="flex items-start justify-between">
+                        <div>
+                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{format(new Date(req.created_at), 'dd MMM yyyy')}</p>
+                           <h3 className="font-black text-slate-900 text-lg leading-tight tracking-tight">{req.item_name}</h3>
+                        </div>
+                        <span className={cn(
+                            "px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest",
+                            req.type === 'borrow' ? "bg-blue-50 text-blue-600" :
+                            req.type === 'new_item' ? "bg-indigo-50 text-indigo-600" :
+                            "bg-rose-50 text-rose-600"
+                        )}>
+                            {req.type === 'borrow' ? 'Pinjam' : req.type === 'new_item' ? 'Request' : 'Rusak'}
+                        </span>
+                     </div>
+
+                     <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                           <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 font-black text-[10px] uppercase">
+                              {req.user_name.charAt(0)}
+                           </div>
+                           <span className="text-xs font-bold text-slate-600">{req.user_name}</span>
+                        </div>
+                        <div className={cn(
+                            "flex items-center gap-1.5 font-black text-[10px] uppercase tracking-widest",
+                            req.status === 'pending' ? "text-amber-500" :
+                            req.status === 'approved' ? "text-emerald-500" :
+                            "text-rose-500"
+                        )}>
+                           <div className={cn("w-1.5 h-1.5 rounded-full",
+                              req.status === 'pending' ? "bg-amber-500" :
+                              req.status === 'approved' ? "bg-emerald-500" : "bg-rose-500"
+                           )}></div>
+                           {req.status}
+                        </div>
+                     </div>
+                  </div>
+               ))}
+            </div>
         </div>
       )}
 
@@ -695,6 +975,7 @@ export default function InventoryPage() {
                             {modalType === 'report-damage' && 'Lapor Barang Rusak'}
                             {modalType === 'request-new' && 'Request Barang Baru'}
                             {modalType === 'request-detail' && 'Detail Permintaan'}
+                            {modalType === 'import-excel' && 'Import Data Inventaris'}
                         </h2>
                         <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mt-1">Form Inventaris</p>
                     </div>
@@ -702,38 +983,123 @@ export default function InventoryPage() {
                         setModalType(null);
                         setEditingItem(null);
                         setItemFormData({ name: '', quantity: 1, condition: 'Baik', location: '' });
+                        setImportData([]);
                     }} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400">
                         <X size={24} />
                     </button>
                 </div>
 
                 <div className="p-8">
-                    {modalType === 'add-item' ? (
+                    {modalType === 'import-excel' ? (
+                        <div className="space-y-6">
+                            <div className="bg-brand-50 p-6 rounded-[2rem] border border-brand-100 text-center">
+                                <Upload className="h-12 w-12 text-brand-600 mx-auto mb-4" />
+                                <h3 className="text-lg font-black text-brand-900 tracking-tight">Unggah File Excel/CSV</h3>
+                                <p className="text-sm font-medium text-brand-700 mt-2 mb-6">
+                                    Pastikan file Anda memiliki kolom: <br/> 
+                                    <span className="font-bold">Nama Barang, Jumlah, Kondisi, Lokasi</span>
+                                </p>
+                                <input 
+                                    type="file" 
+                                    accept=".xlsx, .xls, .csv" 
+                                    onChange={handleFileUpload}
+                                    className="block w-full text-sm text-slate-500 file:mr-4 file:py-3 file:px-6 file:rounded-xl file:border-0 file:text-xs file:font-black file:uppercase file:bg-brand-600 file:text-white hover:file:bg-brand-700 transition-all"
+                                />
+                            </div>
+
+                            {importData.length > 0 && (
+                                <div className="space-y-4">
+                                    <div className="bg-office-gray p-4 rounded-2xl flex justify-between items-center">
+                                        <span className="text-sm font-bold text-slate-700">{importData.length} Baris data ditemukan</span>
+                                        <CheckCircle2 className="h-5 w-5 text-green-500" />
+                                    </div>
+                                    
+                                    {/* Preview Table */}
+                                    <div className="max-h-40 overflow-y-auto border border-office-border rounded-xl">
+                                        <table className="w-full text-[10px] text-left">
+                                            <thead className="bg-white sticky top-0 border-b">
+                                                <tr>
+                                                    <th className="p-2 font-black uppercase">Barang</th>
+                                                    <th className="p-2 font-black uppercase text-center">Qty</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="bg-white">
+                                                {importData.slice(0, 5).map((row, idx) => (
+                                                    <tr key={idx} className="border-b last:border-0">
+                                                        <td className="p-2 font-bold truncate max-w-[150px]">{row['Nama Barang'] || row['name'] || '---'}</td>
+                                                        <td className="p-2 text-center">{row['Jumlah'] || row['quantity'] || '0'}</td>
+                                                    </tr>
+                                                ))}
+                                                {importData.length > 5 && (
+                                                    <tr>
+                                                        <td colSpan={2} className="p-2 text-center text-slate-400 italic">...dan {importData.length - 5} lainnya</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+
+                                    <button 
+                                        onClick={processImport}
+                                        disabled={isSubmitting}
+                                        className="w-full bg-brand-600 text-white font-black uppercase tracking-tight py-4 rounded-2xl hover:bg-brand-700 transition-all shadow-lg shadow-brand-100 disabled:opacity-50"
+                                    >
+                                        {isSubmitting ? 'Memproses Import...' : 'Konfirmasi Import'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    ) : modalType === 'add-item' ? (
                         <form onSubmit={handleAddItem} className="space-y-5">
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Nama Barang</label>
-                                <input required value={itemFormData.name} onChange={e => setItemFormData({...itemFormData, name: e.target.value})} className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500" placeholder="Monitor LG 27 Inch"/>
+                                <input 
+                                    type="text"
+                                    required 
+                                    value={itemFormData.name} 
+                                    onChange={e => setItemFormData({...itemFormData, name: e.target.value})} 
+                                    className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 outline-none transition-all" 
+                                    placeholder="Monitor LG 27 Inch"
+                                />
                             </div>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Jumlah</label>
-                                    <input required type="number" min="1" value={itemFormData.quantity} onChange={e => setItemFormData({...itemFormData, quantity: parseInt(e.target.value)})} className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500"/>
+                                    <input 
+                                        type="number"
+                                        required 
+                                        min="1" 
+                                        value={itemFormData.quantity} 
+                                        onChange={e => setItemFormData({...itemFormData, quantity: parseInt(e.target.value) || 0})} 
+                                        className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 outline-none transition-all"
+                                    />
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Kondisi</label>
-                                    <select value={itemFormData.condition} onChange={e => setItemFormData({...itemFormData, condition: e.target.value})} className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500">
+                                    <select 
+                                        value={itemFormData.condition} 
+                                        onChange={e => setItemFormData({...itemFormData, condition: e.target.value })} 
+                                        className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 outline-none transition-all"
+                                    >
                                         <option value="Baik">Baik</option>
-                                        <option value="Perlu Perbaikan">Perlu Perbaikan</option>
-                                        <option value="Rusak">Rusak</option>
+                                        <option value="Rusak Ringan">Rusak Ringan</option>
+                                        <option value="Rusak Berat">Rusak Berat</option>
                                     </select>
                                 </div>
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Lokasi</label>
-                                <input required value={itemFormData.location} onChange={e => setItemFormData({...itemFormData, location: e.target.value})} className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500" placeholder="Gudang IT"/>
+                                <input 
+                                    type="text"
+                                    required 
+                                    value={itemFormData.location} 
+                                    onChange={e => setItemFormData({...itemFormData, location: e.target.value})} 
+                                    className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 outline-none transition-all" 
+                                    placeholder="Gudang IT"
+                                />
                             </div>
                             <button disabled={isSubmitting} type="submit" className="w-full bg-brand-600 text-white font-black uppercase tracking-tight py-4 rounded-2xl hover:bg-brand-700 transition-all shadow-lg shadow-brand-100 disabled:opacity-50">
-                                {isSubmitting ? 'Memproses...' : 'Simpan Barang'}
+                                {isSubmitting ? 'Memproses...' : (editingItem ? 'Perbarui Barang' : 'Simpan Barang')}
                             </button>
                         </form>
                     ) : modalType === 'request-detail' ? (

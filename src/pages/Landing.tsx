@@ -69,12 +69,13 @@ export default function LandingPage() {
             className="mt-16 rounded-2xl overflow-hidden shadow-2xl border border-gray-100"
           >
             <div className="bg-gray-100 p-2">
-              <div className="bg-white rounded-lg aspect-video flex items-center justify-center text-gray-400">
-                <div className="grid grid-cols-3 gap-8 w-full p-12">
-                   <div className="h-40 bg-gray-50 rounded-xl animate-pulse"></div>
-                   <div className="h-40 bg-gray-50 rounded-xl animate-pulse"></div>
-                   <div className="h-40 bg-gray-50 rounded-xl animate-pulse"></div>
-                </div>
+              <div className="bg-white rounded-lg aspect-video overflow-hidden">
+                <img 
+                  src="https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&q=80&w=2070" 
+                  alt="Modern Office Management"
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
               </div>
             </div>
           </motion.div>

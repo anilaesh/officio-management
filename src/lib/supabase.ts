@@ -92,6 +92,7 @@ export interface LeaveRequest {
   start_date: string;
   end_date: string;
   status: 'pending' | 'approved' | 'rejected';
+  medical_certificate_url?: string;
   admin_note?: string;
   created_at: string;
 }

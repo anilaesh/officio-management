@@ -12,7 +12,9 @@ import {
   AlertCircle,
   XCircle,
   TrendingUp,
-  ArrowRight
+  ArrowRight,
+  Zap,
+  Building2
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
@@ -108,7 +110,7 @@ export default function Dashboard() {
       try {
         const todayStr = format(new Date(), 'yyyy-MM-dd');
         
-        const [attCount, leaveCount, myAtt, recentAtt, pending, todayMeets] = await Promise.all([
+        const fetchPromise = Promise.all([
           supabase.from('attendance').select('id', { count: 'exact', head: true }).eq('date', todayStr),
           supabase.from('leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
           profile?.role === 'employee' ? supabase.from('attendance').select('*').eq('user_id', user.id).eq('date', todayStr).maybeSingle() : Promise.resolve({ data: null }),
@@ -116,6 +118,12 @@ export default function Dashboard() {
           profile?.role === 'admin' ? supabase.from('leave_requests').select('*, profiles(full_name)').eq('status', 'pending').order('created_at', { ascending: false }).limit(5) : Promise.resolve({ data: [] }),
           supabase.from('meetings').select('*, rooms(name)').gte('start_time', todayStr + 'T00:00:00').lte('start_time', todayStr + 'T23:59:59').limit(3)
         ]);
+
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Fetch timeout')), 4000)
+        );
+
+        const [attCount, leaveCount, myAtt, recentAtt, pending, todayMeets] = await Promise.race([fetchPromise, timeoutPromise]) as any;
 
         setStats({
           attendanceToday: attCount.count || 0,
@@ -228,12 +236,18 @@ export default function Dashboard() {
     }
   };
 
-  if (loading) return <div className="animate-pulse space-y-6">
-    <div className="h-40 bg-slate-50 rounded-3xl"></div>
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-      {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-slate-50 rounded-3xl"></div>)}
+  if (loading) return (
+    <div className="space-y-8 animate-pulse">
+      <div className="h-44 bg-slate-100 rounded-[2.5rem] border border-slate-200"></div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        {[1, 2, 3, 4].map(i => <div key={i} className="h-32 bg-slate-100 rounded-3xl border border-slate-200"></div>)}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 h-64 bg-slate-50 rounded-3xl border border-slate-100"></div>
+        <div className="h-64 bg-slate-50 rounded-3xl border border-slate-100"></div>
+      </div>
     </div>
-  </div>;
+  );
 
   const isAdmin = profile?.role === 'admin';
 
@@ -306,13 +320,13 @@ export default function Dashboard() {
       )}
 
       {/* Header & Role Badge */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-gray-900 tracking-tight leading-none mb-2">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm relative overflow-hidden">
+        <div className="relative z-10">
+          <h1 className="text-4xl font-black text-gray-900 tracking-tight leading-none mb-3">
             Halo, {profile?.full_name?.split(' ')[0]}!
           </h1>
-          <div className="flex items-center gap-3">
-            <p className="text-gray-500 font-medium text-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-gray-500 font-bold text-sm bg-slate-50 px-3 py-1 rounded-lg">
               {format(new Date(), "EEEE, d MMMM yyyy", { locale: id })}
             </p>
             <span className={cn(
@@ -333,17 +347,26 @@ export default function Dashboard() {
           </div>
         </div>
         
-        {!isAdmin && (
-           <div className="hidden md:flex items-center gap-4 bg-white p-3 border border-slate-100 rounded-2xl shadow-sm">
-              <div className={cn(
-                "w-3 h-3 rounded-full animate-pulse",
-                todayAttendance ? "bg-green-500" : "bg-rose-500"
-              )}></div>
-              <span className="text-[13px] font-bold text-slate-600">
-                Status: {todayAttendance ? 'Sudah Absen' : 'Belum Absen'}
-              </span>
-           </div>
-        )}
+        <div className="relative z-10 flex items-center gap-4">
+          {!isAdmin && (
+            <div className="flex items-center gap-4 bg-slate-50 p-3 rounded-2xl border border-slate-100">
+                <div className={cn(
+                  "w-3 h-3 rounded-full animate-pulse",
+                  todayAttendance ? "bg-green-500" : "bg-rose-500"
+                )}></div>
+                <span className="text-[13px] font-black text-slate-600 uppercase tracking-tight">
+                  {todayAttendance ? 'Sudah Absen' : 'Belum Absen'}
+                </span>
+            </div>
+          )}
+          <div className="hidden lg:flex h-12 w-12 rounded-2xl bg-brand-600 items-center justify-center text-white shadow-lg shadow-brand-200">
+             <Zap size={24} fill="currentColor" />
+          </div>
+        </div>
+
+        {/* Decorative background element */}
+        <div className="absolute right-0 top-0 w-32 h-32 bg-brand-50 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl opacity-50"></div>
+        <Building2 size={120} className="absolute -right-4 -bottom-6 text-slate-50 opacity-40 rotate-12" />
       </div>
 
       {isAdmin ? (
