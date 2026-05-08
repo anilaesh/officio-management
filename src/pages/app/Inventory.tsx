@@ -50,37 +50,11 @@ export default function InventoryPage() {
   useEffect(() => {
     if (isDemo) setEffectivelyDemo(true);
   }, [isDemo]);
-
   const [activeTab, setActiveTab] = useState<ActiveTab>('items');
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [requests, setRequests] = useState<InventoryRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-
-  // Pagination Logic
-  const itemsPerPage = 5;
-
-  // Stats calculations
-  const stats = useMemo(() => {
-    // Current Borrowed: Sum of all approved borrow requests
-    const currentBorrowed = requests
-      .filter(r => r.type === 'borrow' && r.status === 'approved')
-      .reduce((acc, curr) => acc + curr.quantity, 0);
-    
-    // Total Assets (Available): Sum of all quantities in inventory table
-    // According to user request, when borrowed, the stock decrements and total assets card should also decrement.
-    // So Sum(Stock) is the Available count.
-    const totalAvailable = items.reduce((acc, curr) => acc + curr.quantity, 0);
-    
-    const badCondition = items.filter(i => i.condition !== 'Baik').length;
-    
-    return {
-      totalAssets: totalAvailable,
-      badCondition,
-      currentBorrowed
-    };
-  }, [items, requests]);
-
   const [modalType, setModalType] = useState<ModalType | null>(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<InventoryRequest | null>(null);
@@ -94,6 +68,7 @@ export default function InventoryPage() {
   // Pagination State
   const [currentPageItems, setCurrentPageItems] = useState(1);
   const [currentPageRequests, setCurrentPageRequests] = useState(1);
+  const itemsPerPage = 5;
 
   useEffect(() => {
     setSelectedIds([]);
@@ -238,13 +213,12 @@ export default function InventoryPage() {
         setItems(JSON.parse(stored));
       } else {
         const initialItems = [
-          { id: '1', name: 'Laptop Macbook Air M2', quantity: 10, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-20T10:00:00' },
-          { id: '2', name: 'Monitor Dell 24"', quantity: 20, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-21T14:30:00' },
-          { id: '3', name: 'Keyboard Logitech K120', quantity: 15, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-22T09:00:00' },
-          { id: '4', name: 'Kursi Kantor Ergonomis', quantity: 40, condition: 'Baik', location: 'Area Kerja Utama', updated_at: '2026-04-25T11:00:00' },
-          { id: '5', name: 'Mouse Wireless Logitech', quantity: 24, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-26T15:00:00' },
+          { id: '1', name: 'Laptop Macbook Air M2', quantity: 15, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-20T10:00:00' },
+          { id: '2', name: 'Monitor Dell 24"', quantity: 30, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-21T14:30:00' },
+          { id: '3', name: 'Keyboard Logitech K120', quantity: 5, condition: 'Perlu Perbaikan', location: 'Gudang IT', updated_at: '2026-04-22T09:00:00' },
+          { id: '4', name: 'Kursi Kantor Ergonomis', quantity: 45, condition: 'Baik', location: 'Area Kerja Utama', updated_at: '2026-04-25T11:00:00' },
+          { id: '5', name: 'Proyektor BenQ', quantity: 2, condition: 'Rusak', location: 'Gudang Umum', updated_at: '2026-04-26T15:00:00' },
         ];
-        // Sum: 10 + 20 + 15 + 40 + 24 = 109. Matches user screenshot!
         localStorage.setItem('officio_demo_inventory', JSON.stringify(initialItems));
         setItems(initialItems);
       }
@@ -746,6 +720,21 @@ export default function InventoryPage() {
   useEffect(() => {
     setCurrentPageRequests(1);
   }, [activeTab]);
+
+  // Stats calculations
+  const stats = useMemo(() => {
+    const totalAssets = items.reduce((acc, curr) => acc + curr.quantity, 0);
+    const badCondition = items.filter(i => i.condition !== 'Baik').length;
+    const currentBorrowed = requests
+      .filter(r => r.type === 'borrow' && r.status === 'approved')
+      .reduce((acc, curr) => acc + curr.quantity, 0);
+    
+    return {
+      totalAssets,
+      badCondition,
+      currentBorrowed
+    };
+  }, [items, requests]);
 
   return (
     <div className="space-y-8">
