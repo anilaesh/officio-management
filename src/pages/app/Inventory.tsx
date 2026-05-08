@@ -1,6 +1,7 @@
-import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
+import { useState, useEffect, useMemo, FormEvent, ChangeEvent } from 'react';
 import { useAuth } from '../../lib/AuthContext';
-import { supabase, InventoryItem, InventoryRequest, InventoryRequestType } from '../../lib/supabase';
+import { supabase, InventoryItem, InventoryRequest, InventoryRequestType, InventoryRequestStatus } from '../../lib/supabase';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Package, 
   Search, 
@@ -22,7 +23,9 @@ import {
   Edit2,
   Trash2,
   FileDown,
-  Upload
+  Upload,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { id } from 'date-fns/locale';
@@ -47,17 +50,144 @@ export default function InventoryPage() {
   useEffect(() => {
     if (isDemo) setEffectivelyDemo(true);
   }, [isDemo]);
+
   const [activeTab, setActiveTab] = useState<ActiveTab>('items');
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [requests, setRequests] = useState<InventoryRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+
+  // Pagination Logic
+  const itemsPerPage = 5;
+
+  // Stats calculations
+  const stats = useMemo(() => {
+    // Current Borrowed: Sum of all approved borrow requests
+    const currentBorrowed = requests
+      .filter(r => r.type === 'borrow' && r.status === 'approved')
+      .reduce((acc, curr) => acc + curr.quantity, 0);
+    
+    // Total Assets (Available): Sum of all quantities in inventory table
+    // According to user request, when borrowed, the stock decrements and total assets card should also decrement.
+    // So Sum(Stock) is the Available count.
+    const totalAvailable = items.reduce((acc, curr) => acc + curr.quantity, 0);
+    
+    const badCondition = items.filter(i => i.condition !== 'Baik').length;
+    
+    return {
+      totalAssets: totalAvailable,
+      badCondition,
+      currentBorrowed
+    };
+  }, [items, requests]);
+
   const [modalType, setModalType] = useState<ModalType | null>(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<InventoryRequest | null>(null);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedRequestIds, setSelectedRequestIds] = useState<string[]>([]);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Pagination State
+  const [currentPageItems, setCurrentPageItems] = useState(1);
+  const [currentPageRequests, setCurrentPageRequests] = useState(1);
+
+  useEffect(() => {
+    setSelectedIds([]);
+    setSelectedRequestIds([]);
+  }, [activeTab]);
+
+  // Toggle single selection items
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  // Toggle select all items
+  const toggleSelectAll = () => {
+    if (selectedIds.length === paginatedItems.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(paginatedItems.map(i => i.id));
+    }
+  };
+
+  // Selection Requests
+  const toggleSelectRequest = (id: string) => {
+    setSelectedRequestIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllRequests = () => {
+    if (selectedRequestIds.length === paginatedRequests.length) {
+      setSelectedRequestIds([]);
+    } else {
+      setSelectedRequestIds(paginatedRequests.map(r => r.id));
+    }
+  };
+
+  // Bulk delete selected items
+  const handleBulkDelete = async () => {
+    if (!profile || profile.role !== 'admin' || selectedIds.length === 0) return;
+    
+    const confirmMsg = `Hapus ${selectedIds.length} barang terpilih?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsSubmitting(true);
+    try {
+      if (effectivelyDemo) {
+        const remaining = items.filter(i => !selectedIds.includes(i.id));
+        localStorage.setItem('officio_demo_inventory', JSON.stringify(remaining));
+        new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_INVENTORY' });
+      } else {
+        const { error } = await supabase.from('inventory').delete().in('id', selectedIds);
+        if (error) throw error;
+      }
+      
+      toast(`${selectedIds.length} barang berhasil dihapus!`);
+      setSelectedIds([]);
+      await fetchItems();
+    } catch (err) {
+      console.error(err);
+      toast('Gagal menghapus beberapa barang.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Bulk delete selected requests
+  const handleBulkDeleteRequests = async () => {
+    if (!profile || profile.role !== 'admin' || selectedRequestIds.length === 0) return;
+    
+    const confirmMsg = `Hapus ${selectedRequestIds.length} permintaan terpilih?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setIsSubmitting(true);
+    try {
+      if (effectivelyDemo) {
+        const remaining = requests.filter(r => !selectedRequestIds.includes(r.id));
+        localStorage.setItem('officio_demo_inventory_requests', JSON.stringify(remaining));
+        new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_REQUIRED' });
+      } else {
+        const { error } = await supabase.from('inventory_requests').delete().in('id', selectedRequestIds);
+        if (error) throw error;
+      }
+      
+      toast(`${selectedRequestIds.length} permintaan berhasil dihapus!`);
+      setSelectedRequestIds([]);
+      await fetchRequests();
+    } catch (err) {
+      console.error(err);
+      toast('Gagal menghapus beberapa permintaan.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
   const [showSuccessToast, setShowSuccessToast] = useState<{show: boolean, message: string}>({ show: false, message: '' });
   const [importData, setImportData] = useState<any[]>([]);
   
@@ -74,7 +204,9 @@ export default function InventoryPage() {
     item_name: '',
     quantity: 1,
     reason: '',
-    type: 'borrow' as InventoryRequestType
+    type: 'borrow' as InventoryRequestType,
+    borrow_start_date: '',
+    borrow_end_date: ''
   });
 
   const [adminNote, setAdminNote] = useState('');
@@ -106,12 +238,13 @@ export default function InventoryPage() {
         setItems(JSON.parse(stored));
       } else {
         const initialItems = [
-          { id: '1', name: 'Laptop Macbook Air M2', quantity: 15, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-20T10:00:00' },
-          { id: '2', name: 'Monitor Dell 24"', quantity: 30, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-21T14:30:00' },
-          { id: '3', name: 'Keyboard Logitech K120', quantity: 5, condition: 'Perlu Perbaikan', location: 'Gudang IT', updated_at: '2026-04-22T09:00:00' },
-          { id: '4', name: 'Kursi Kantor Ergonomis', quantity: 45, condition: 'Baik', location: 'Area Kerja Utama', updated_at: '2026-04-25T11:00:00' },
-          { id: '5', name: 'Proyektor BenQ', quantity: 2, condition: 'Rusak', location: 'Gudang Umum', updated_at: '2026-04-26T15:00:00' },
+          { id: '1', name: 'Laptop Macbook Air M2', quantity: 10, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-20T10:00:00' },
+          { id: '2', name: 'Monitor Dell 24"', quantity: 20, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-21T14:30:00' },
+          { id: '3', name: 'Keyboard Logitech K120', quantity: 15, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-22T09:00:00' },
+          { id: '4', name: 'Kursi Kantor Ergonomis', quantity: 40, condition: 'Baik', location: 'Area Kerja Utama', updated_at: '2026-04-25T11:00:00' },
+          { id: '5', name: 'Mouse Wireless Logitech', quantity: 24, condition: 'Baik', location: 'Gudang IT', updated_at: '2026-04-26T15:00:00' },
         ];
+        // Sum: 10 + 20 + 15 + 40 + 24 = 109. Matches user screenshot!
         localStorage.setItem('officio_demo_inventory', JSON.stringify(initialItems));
         setItems(initialItems);
       }
@@ -161,6 +294,8 @@ export default function InventoryPage() {
             type: 'borrow', 
             quantity: 1, 
             reason: 'Untuk pengerjaan proyek desain di luar kantor', 
+            borrow_start_date: '2026-05-10',
+            borrow_end_date: '2026-05-15',
             status: 'pending', 
             created_at: new Date().toISOString() 
           },
@@ -296,6 +431,35 @@ export default function InventoryPage() {
     }
   };
 
+  const confirmDeleteAll = async () => {
+    if (!profile || profile.role !== 'admin') return;
+    setIsSubmitting(true);
+    
+    if (effectivelyDemo) {
+      localStorage.setItem('officio_demo_inventory', JSON.stringify([]));
+      new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_INVENTORY' });
+      toast('Semua barang berhasil dihapus!');
+      setIsDeletingAll(false);
+      setIsSubmitting(false);
+      await fetchItems();
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('inventory').delete().neq('id', '0'); // Delete all rows
+      if (error) throw error;
+      
+      toast('Semua barang berhasil dihapus!');
+      setIsDeletingAll(false);
+      await fetchItems();
+    } catch (err) {
+      console.error(err);
+      toast('Gagal menghapus semua barang.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleEditItem = (item: InventoryItem) => {
     setEditingItem(item);
     setItemFormData({
@@ -309,6 +473,15 @@ export default function InventoryPage() {
 
   const handleSubmitRequest = async (e: FormEvent) => {
     e.preventDefault();
+    
+    // Validate quantity for borrow requests
+    if (requestFormData.type === 'borrow' && selectedItem) {
+      if (Number(requestFormData.quantity) > selectedItem.quantity) {
+        toast(`Stok tidak mencukupi. Tersedia: ${selectedItem.quantity}`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
     const newRequest: Partial<InventoryRequest> = {
@@ -319,6 +492,8 @@ export default function InventoryPage() {
       type: requestFormData.type,
       quantity: Number(requestFormData.quantity),
       reason: requestFormData.reason,
+      borrow_start_date: requestFormData.type === 'borrow' ? requestFormData.borrow_start_date : undefined,
+      borrow_end_date: requestFormData.type === 'borrow' ? requestFormData.borrow_end_date : undefined,
       status: 'pending',
       created_at: new Date().toISOString()
     };
@@ -355,43 +530,111 @@ export default function InventoryPage() {
     }
   };
 
-  const handleUpdateStatus = async (status: 'approved' | 'rejected') => {
+  const handleUpdateStatus = async (status: InventoryRequestStatus) => {
     if (!selectedRequest) return;
     setIsSubmitting(true);
 
     if (effectivelyDemo) {
-      const stored = localStorage.getItem('officio_demo_inventory_requests');
-      let current = stored ? JSON.parse(stored) : [];
-      current = current.map((r: any) => 
+      const storedItems = localStorage.getItem('officio_demo_inventory');
+      let currentItems = storedItems ? JSON.parse(storedItems) : [];
+      let updatedItems = [...currentItems];
+
+      // Logic: If approved borrow, decrement inventory. If returned, increment.
+      if (selectedRequest.type === 'borrow') {
+        const itemIndex = updatedItems.findIndex((i: InventoryItem) => String(i.id) === String(selectedRequest.item_id));
+        if (itemIndex !== -1) {
+          if (status === 'approved' && selectedRequest.status === 'pending') {
+            if (updatedItems[itemIndex].quantity < selectedRequest.quantity) {
+              toast('Stok tidak cukup untuk menyetujui peminjaman ini.');
+              setIsSubmitting(false);
+              return;
+            }
+            updatedItems[itemIndex].quantity -= selectedRequest.quantity;
+          } else if (status === 'returned' && selectedRequest.status === 'approved') {
+            updatedItems[itemIndex].quantity += selectedRequest.quantity;
+          }
+          
+          localStorage.setItem('officio_demo_inventory', JSON.stringify(updatedItems));
+          setItems([...updatedItems]);
+          new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_INVENTORY' });
+        }
+      }
+
+      const storedRequests = localStorage.getItem('officio_demo_inventory_requests');
+      let currentRequests = storedRequests ? JSON.parse(storedRequests) : [];
+      currentRequests = currentRequests.map((r: any) => 
         r.id === selectedRequest.id ? { ...r, status, admin_note: adminNote } : r
       );
-      localStorage.setItem('officio_demo_inventory_requests', JSON.stringify(current));
+      localStorage.setItem('officio_demo_inventory_requests', JSON.stringify(currentRequests));
+      setRequests(currentRequests);
       new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_REQUESTS' });
       
       setModalType(null);
       setAdminNote('');
       setIsSubmitting(false);
-      toast(`Permintaan telah di${status === 'approved' ? 'setujui' : 'tolak'}.`);
-      
-      await fetchRequests();
+      toast(`Permintaan telah ${status === 'approved' ? 'disetujui' : status === 'returned' ? 'diselesaikan' : 'ditolak'}.`);
       return;
     }
 
     try {
+      if (selectedRequest.type === 'borrow' && selectedRequest.item_id) {
+        const { data: itemData, error: itemError } = await supabase
+          .from('inventory')
+          .select('quantity')
+          .eq('id', selectedRequest.item_id)
+          .single();
+        
+        if (itemError) throw itemError;
+        
+        let newQuantity = itemData.quantity;
+        if (status === 'approved' && selectedRequest.status === 'pending') {
+          if (itemData.quantity < selectedRequest.quantity) {
+            toast('Stok tidak cukup untuk menyetujui peminjaman ini.');
+            setIsSubmitting(false);
+            return;
+          }
+          newQuantity -= selectedRequest.quantity;
+        } else if (status === 'returned' && selectedRequest.status === 'approved') {
+          newQuantity += selectedRequest.quantity;
+        }
+
+        if (newQuantity !== itemData.quantity) {
+          const { error: updateItemError } = await supabase
+            .from('inventory')
+            .update({ quantity: newQuantity })
+            .eq('id', String(selectedRequest.item_id));
+          
+          if (updateItemError) throw updateItemError;
+          
+          // Update local state immediately for better UX
+          setItems(prev => prev.map(item => 
+            String(item.id) === String(selectedRequest.item_id) ? { ...item, quantity: newQuantity } : item
+          ));
+        }
+      }
+
       const { error } = await supabase
         .from('inventory_requests')
         .update({ status, admin_note: adminNote })
         .eq('id', selectedRequest.id);
       
       if (error) throw error;
-      
+
+      // Update local requests state immediately
+      setRequests(prev => prev.map(req => 
+        req.id === selectedRequest.id ? { ...req, status, admin_note: adminNote } : req
+      ));
+
       setModalType(null);
       setAdminNote('');
       setIsSubmitting(false);
-      toast(`Permintaan telah di${status === 'approved' ? 'setujui' : 'tolak'}.`);
+      toast(`Permintaan telah ${status === 'approved' ? 'disetujui' : status === 'returned' ? 'diselesaikan' : 'ditolak'}.`);
+      
+      await fetchItems();
       await fetchRequests();
     } catch (err) {
       console.error(err);
+      toast('Gagal memperbarui status. Pastikan tabel inventory dan inventory_requests sudah dikonfigurasi.');
     } finally {
       setIsSubmitting(false);
     }
@@ -474,7 +717,9 @@ export default function InventoryPage() {
       item_name: '',
       quantity: 1,
       reason: '',
-      type: 'borrow'
+      type: 'borrow',
+      borrow_start_date: '',
+      borrow_end_date: ''
     });
   };
 
@@ -490,6 +735,28 @@ export default function InventoryPage() {
   const filteredRequests = profile?.role === 'admin' 
     ? requests 
     : requests.filter(r => r.user_id === user?.id);
+
+  // Pagination Logic - Items
+  const totalPagesItems = Math.ceil(filteredItems.length / itemsPerPage);
+  const paginatedItems = filteredItems.slice(
+    (currentPageItems - 1) * itemsPerPage,
+    currentPageItems * itemsPerPage
+  );
+
+  // Pagination Logic - Requests
+  const totalPagesRequests = Math.ceil(filteredRequests.length / itemsPerPage);
+  const paginatedRequests = filteredRequests.slice(
+    (currentPageRequests - 1) * itemsPerPage,
+    currentPageRequests * itemsPerPage
+  );
+
+  useEffect(() => {
+    setCurrentPageItems(1);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    setCurrentPageRequests(1);
+  }, [activeTab]);
 
   return (
     <div className="space-y-8">
@@ -553,6 +820,46 @@ export default function InventoryPage() {
         </div>
       </div>
 
+      {/* Delete All Confirmation Modal */}
+      {isDeletingAll && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-[2.5rem] w-full max-w-sm p-8 shadow-2xl relative"
+          >
+            <button 
+                onClick={() => setIsDeletingAll(false)}
+                className="absolute top-6 right-6 p-2 h-10 w-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-full hover:bg-slate-100 transition-all active:scale-95"
+            >
+                <X size={20} />
+            </button>
+            <div className="mb-6 text-center">
+              <div className="bg-rose-50 w-20 h-20 rounded-[2rem] flex items-center justify-center text-rose-500 mx-auto mb-4">
+                <Trash2 size={40} />
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 leading-tight">Hapus Semua?</h3>
+              <p className="text-slate-500 font-bold mt-2">Data barang tidak dapat dikembalikan setelah dihapus.</p>
+            </div>
+            <div className="flex flex-col gap-3">
+              <button 
+                onClick={confirmDeleteAll}
+                disabled={isSubmitting}
+                className="w-full py-4 bg-rose-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-rose-700 transition-all active:scale-95 disabled:opacity-50"
+              >
+                Ya, Hapus Semua
+              </button>
+              <button 
+                onClick={() => setIsDeletingAll(false)}
+                className="w-full py-4 bg-slate-100 text-slate-600 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-200 transition-all active:scale-95"
+              >
+                Batal
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {/* Custom Tabs */}
       <div className="flex p-1.5 bg-office-gray rounded-2xl w-fit">
         <button 
@@ -588,21 +895,21 @@ export default function InventoryPage() {
                <div className="bg-brand-50 p-4 rounded-2xl text-brand-600"><BarChart2 className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Total Aset</p>
-                  <p className="text-2xl font-black text-gray-900">{items.reduce((acc, curr) => acc + curr.quantity, 0)} Unit</p>
+                  <p className="text-2xl font-black text-gray-900">{stats.totalAssets} Unit</p>
                </div>
             </div>
             <div className="bg-white p-6 rounded-3xl border border-office-border flex items-center gap-4">
                <div className="bg-rose-50 p-4 rounded-2xl text-rose-600"><AlertTriangle className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Kondisi Buruk</p>
-                  <p className="text-2xl font-black text-gray-900">{items.filter(i => i.condition !== 'Baik').length} Kategori</p>
+                  <p className="text-2xl font-black text-gray-900">{stats.badCondition} Kategori</p>
                </div>
             </div>
             <div className="bg-white p-6 rounded-3xl border border-office-border flex items-center gap-4">
                <div className="bg-indigo-50 p-4 rounded-2xl text-indigo-600"><History className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Dipinjam Saat Ini</p>
-                  <p className="text-2xl font-black text-gray-900">{requests.filter(r => r.type === 'borrow' && r.status === 'approved').length} Unit</p>
+                  <p className="text-2xl font-black text-gray-900">{stats.currentBorrowed} Unit</p>
                </div>
             </div>
           </div>
@@ -623,6 +930,22 @@ export default function InventoryPage() {
                  <button className="flex-1 md:flex-none flex items-center justify-center gap-2 h-12 px-6 bg-slate-50 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all active:scale-95">
                     <Filter size={16} /> Filter
                  </button>
+                 {profile?.role === 'admin' && selectedIds.length > 0 && (
+                    <button 
+                      onClick={handleBulkDelete}
+                      className="hidden md:flex flex-1 md:flex-none items-center justify-center gap-2 h-12 px-6 bg-rose-600 rounded-2xl text-xs font-black uppercase tracking-widest text-white hover:bg-rose-700 transition-all active:scale-95 shadow-lg shadow-rose-100"
+                    >
+                      <Trash2 size={16} /> Hapus Terpilih ({selectedIds.length})
+                    </button>
+                 )}
+                 {profile?.role === 'admin' && filteredItems.length > 0 && selectedIds.length === 0 && (
+                    <button 
+                      onClick={() => setIsDeletingAll(true)}
+                      className="flex-1 md:flex-none flex items-center justify-center gap-2 h-12 px-6 bg-rose-50 rounded-2xl text-xs font-black uppercase tracking-widest text-rose-500 hover:bg-rose-100 transition-all active:scale-95"
+                    >
+                      <Trash2 size={16} /> Hapus Semua
+                    </button>
+                 )}
               </div>
             </div>
 
@@ -631,7 +954,17 @@ export default function InventoryPage() {
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-slate-50/50">
-                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Nama Barang</th>
+                    {profile?.role === 'admin' && (
+                      <th className="pl-10 py-5 w-10">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedIds.length === filteredItems.length && filteredItems.length > 0}
+                          onChange={toggleSelectAll}
+                          className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                        />
+                      </th>
+                    )}
+                    <th className={cn("py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]", profile?.role !== 'admin' && "pl-10")}>Nama Barang</th>
                     <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px] text-center">Stok</th>
                     <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Kondisi</th>
                     <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Lokasi</th>
@@ -642,17 +975,26 @@ export default function InventoryPage() {
                   {loading ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <tr key={`skeleton-items-${i}`} className="animate-pulse">
-                        <td className="px-10 py-6 h-20"><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
-                        <td colSpan={4}></td>
+                        <td className="px-10 py-6 h-20" colSpan={6}><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
                       </tr>
                     ))
-                  ) : filteredItems.length === 0 ? (
+                  ) : paginatedItems.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada data barang.</td>
+                      <td colSpan={6} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada data barang.</td>
                     </tr>
-                  ) : filteredItems.map((item) => (
-                    <tr key={item.id} className="group hover:bg-slate-50/50 transition-colors">
-                      <td className="px-10 py-6">
+                  ) : paginatedItems.map((item) => (
+                    <tr key={item.id} className={cn("group hover:bg-slate-50/50 transition-colors", selectedIds.includes(item.id) && "bg-brand-50/30")}>
+                      {profile?.role === 'admin' && (
+                        <td className="pl-10 py-6">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedIds.includes(item.id)}
+                            onChange={() => toggleSelect(item.id)}
+                            className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                          />
+                        </td>
+                      )}
+                      <td className={cn("py-6", profile?.role !== 'admin' && "pl-10")}>
                         <div className="flex items-center gap-4">
                            <div className="bg-brand-50 p-3 rounded-2xl text-brand-600 group-hover:scale-110 transition-transform"><Package size={20} /></div>
                            <span className="font-black text-slate-900 text-base tracking-tight">{item.name}</span>
@@ -741,18 +1083,58 @@ export default function InventoryPage() {
                         </div>
                      </div>
                   ))
-               ) : filteredItems.length === 0 ? (
+               ) : paginatedItems.length === 0 ? (
                   <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada data barang.</div>
-               ) : filteredItems.map((item) => (
-                  <div key={item.id} className="p-6 bg-white active:bg-slate-50 transition-all space-y-4">
-                     <div className="flex items-start justify-between gap-4">
-                        <div className="flex items-start gap-4">
-                           <div className="bg-brand-50 p-3 rounded-2xl text-brand-600"><Package size={24} /></div>
-                           <div>
-                              <h3 className="font-black text-slate-900 text-lg leading-tight tracking-tight">{item.name}</h3>
-                              <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mt-1">{item.location}</p>
-                           </div>
+                ) : paginatedItems.map((item) => (
+                  <div key={item.id} className="relative overflow-hidden bg-white first:rounded-t-[2rem] last:rounded-b-[2rem]">
+                    {/* Swipe Actions Background */}
+                    <div className="absolute inset-0 flex justify-end items-stretch">
+                      <button 
+                        onClick={() => handleEditItem(item)}
+                        className="w-24 bg-indigo-600 text-white flex flex-col items-center justify-center gap-1 active:bg-indigo-700 transition-colors"
+                      >
+                        <Edit2 size={20} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Edit</span>
+                      </button>
+                      <button 
+                        onClick={() => setDeletingId(item.id)}
+                        className="w-24 bg-rose-600 text-white flex flex-col items-center justify-center gap-1 active:bg-rose-700 transition-colors"
+                      >
+                        <Trash2 size={20} />
+                        <span className="text-[10px] font-black uppercase tracking-widest">Hapus</span>
+                      </button>
+                    </div>
+
+                    {/* Draggable Card Content */}
+                    <motion.div 
+                      drag="x"
+                      dragConstraints={{ left: profile?.role === 'admin' ? -192 : 0, right: 0 }}
+                      dragElastic={0.1}
+                      whileTap={{ cursor: 'grabbing' }}
+                      className={cn(
+                        "relative p-6 bg-white border-b border-office-border last:border-b-0 transition-shadow active:shadow-lg active:z-10 flex gap-4",
+                        selectedIds.includes(item.id) && "bg-brand-50/30"
+                      )}
+                    >
+                      {profile?.role === 'admin' && (
+                        <div className="pt-2">
+                           <input 
+                              type="checkbox" 
+                              checked={selectedIds.includes(item.id)}
+                              onChange={() => toggleSelect(item.id)}
+                              className="w-6 h-6 rounded-xl border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                           />
                         </div>
+                      )}
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex items-start gap-4">
+                             <div className="bg-brand-50 p-3 rounded-2xl text-brand-600"><Package size={24} /></div>
+                             <div>
+                                <h3 className="font-black text-slate-900 text-lg leading-tight tracking-tight">{item.name}</h3>
+                                <p className="text-[11px] font-black uppercase tracking-widest text-slate-400 mt-1">{item.location}</p>
+                             </div>
+                          </div>
                         <span className={cn(
                           "whitespace-nowrap px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest",
                           item.condition === 'Baik' ? "bg-emerald-50 text-emerald-600" :
@@ -761,72 +1143,174 @@ export default function InventoryPage() {
                         )}>
                           {item.condition}
                         </span>
-                     </div>
+                      </div>
+                    </div>
 
-                     <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-3 mt-4">
                         <div className="flex items-center justify-between bg-slate-50 px-4 py-3 rounded-xl border border-slate-100">
                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stok</span>
                            <span className="text-lg font-black text-slate-900">{item.quantity}</span>
                         </div>
-                     </div>
+                      </div>
 
-                     <div className="flex gap-2 pt-2">
-                        {profile?.role === 'admin' ? (
-                           <>
-                              <button 
-                                 onClick={() => handleEditItem(item)}
-                                 className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-office-gray text-slate-600 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                              >
-                                 <Edit2 size={14} /> Edit
-                              </button>
-                              <button 
-                                 onClick={() => setDeletingId(item.id)}
-                                 className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-rose-50 text-rose-600 rounded-2xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                              >
-                                 <Trash2 size={14} /> Hapus
-                              </button>
-                           </>
-                        ) : (
-                           <>
-                              <button 
-                                 onClick={() => {
-                                     setSelectedItem(item);
-                                     resetRequestForm();
-                                     setRequestFormData(prev => ({ ...prev, item_id: item.id, item_name: item.name, type: 'borrow' }));
-                                     setModalType('borrow');
-                                 }}
-                                 disabled={item.quantity === 0 || item.condition === 'Rusak'}
-                                 className="flex-[2] py-4 bg-office-slate-800 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest active:scale-95 disabled:opacity-30"
-                              >
-                                 Pinjam Barang
-                              </button>
-                              <button 
-                                 onClick={() => {
-                                     setSelectedItem(item);
-                                     resetRequestForm();
-                                     setRequestFormData(prev => ({ ...prev, item_id: item.id, item_name: item.name, type: 'report_damage' }));
-                                     setModalType('report-damage');
-                                 }}
-                                 className="flex-1 flex items-center justify-center gap-2 py-4 bg-rose-50 text-rose-600 rounded-2xl text-[11px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                              >
-                                 <AlertTriangle size={16} /> Lapor
-                              </button>
-                           </>
-                        )}
-                     </div>
+                      {profile?.role !== 'admin' && (
+                        <div className="flex gap-2 pt-4">
+                          <button 
+                              onClick={() => {
+                                  setSelectedItem(item);
+                                  resetRequestForm();
+                                  setRequestFormData(prev => ({ ...prev, item_id: item.id, item_name: item.name, type: 'borrow' }));
+                                  setModalType('borrow');
+                              }}
+                              disabled={item.quantity === 0 || item.condition === 'Rusak'}
+                              className="flex-[2] py-4 bg-office-slate-800 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest active:scale-95 disabled:opacity-30"
+                          >
+                              Pinjam Barang
+                          </button>
+                          <button 
+                              onClick={() => {
+                                  setSelectedItem(item);
+                                  resetRequestForm();
+                                  setRequestFormData(prev => ({ ...prev, item_id: item.id, item_name: item.name, type: 'report_damage' }));
+                                  setModalType('report-damage');
+                              }}
+                              className="flex-1 flex items-center justify-center gap-2 py-4 bg-rose-50 text-rose-600 rounded-2xl text-[11px] font-black uppercase tracking-widest active:scale-95 transition-all"
+                          >
+                              <AlertTriangle size={16} /> Lapor
+                          </button>
+                        </div>
+                      )}
+                      
+                      {profile?.role === 'admin' && (
+                        <div className="mt-2 text-center md:hidden">
+                          <p className="text-[9px] text-slate-300 font-black uppercase tracking-widest">← Swipe ke kiri untuk edit/hapus</p>
+                        </div>
+                      )}
+                    </motion.div>
                   </div>
                ))}
+            </div>
+
+            {/* Pagination Controls - Items */}
+            {totalPagesItems > 1 && (
+              <div className="p-8 border-t border-office-border flex items-center justify-between gap-4 bg-white">
+                <div className="hidden sm:block">
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    Halaman {currentPageItems} dari {totalPagesItems}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button 
+                    onClick={() => setCurrentPageItems(prev => Math.max(1, prev - 1))}
+                    disabled={currentPageItems === 1}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    <ChevronLeft size={16} /> Prev
+                  </button>
+                  
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPagesItems) }).map((_, i) => {
+                      // Simple windowing for pagination numbers
+                      let pageNum = i + 1;
+                      if (totalPagesItems > 5 && currentPageItems > 3) {
+                        pageNum = Math.min(currentPageItems - 2 + i, totalPagesItems - 4 + i);
+                      }
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => setCurrentPageItems(pageNum)}
+                          className={`hidden sm:flex h-10 w-10 items-center justify-center rounded-xl text-[10px] font-black transition-all ${
+                            currentPageItems === pageNum 
+                              ? "bg-brand-600 text-white shadow-lg shadow-brand-100" 
+                              : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button 
+                    onClick={() => setCurrentPageItems(prev => Math.min(totalPagesItems, prev + 1))}
+                    disabled={currentPageItems === totalPagesItems}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Actions Sticky Bar */}
+            <div className="md:hidden">
+              <AnimatePresence>
+                {selectedIds.length > 0 && (
+                  <motion.div 
+                    initial={{ y: 100 }}
+                    animate={{ y: 0 }}
+                    exit={{ y: 100 }}
+                    className="fixed bottom-24 left-4 right-4 bg-white rounded-[2rem] shadow-2xl border border-office-border p-4 z-[90] flex items-center justify-between"
+                  >
+                    <div className="flex flex-col pl-4">
+                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{selectedIds.length} Barang Terpilih</span>
+                       <span className="font-black text-slate-900">Opsi Hapus Masal</span>
+                    </div>
+                    <button 
+                      onClick={handleBulkDelete}
+                      className="bg-rose-600 text-white px-6 py-4 rounded-3xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all shadow-lg shadow-rose-200"
+                    >
+                      Hapus ({selectedIds.length})
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         </>
       ) : (
         <div className="bg-white rounded-[2.5rem] border border-office-border shadow-sm overflow-hidden mb-safe">
+            {/* Header for Requests */}
+            {profile?.role === 'admin' ? (
+              <div className="p-8 lg:px-10 border-b border-office-border flex flex-col md:flex-row md:items-center justify-between gap-6">
+                <div className="flex-1">
+                   <h2 className="text-xl font-black text-slate-900 tracking-tight">Manajemen Permintaan</h2>
+                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Kelola perizinan peminjaman dan request barang</p>
+                </div>
+                <div className="flex gap-2">
+                   {selectedRequestIds.length > 0 && (
+                      <button 
+                        onClick={handleBulkDeleteRequests}
+                        className="flex-1 md:flex-none flex items-center justify-center gap-2 h-12 px-6 bg-rose-600 rounded-2xl text-xs font-black uppercase tracking-widest text-white hover:bg-rose-700 transition-all active:scale-95 shadow-lg shadow-rose-100"
+                      >
+                        <Trash2 size={16} /> Hapus Terpilih ({selectedRequestIds.length})
+                      </button>
+                   )}
+                </div>
+              </div>
+            ) : (
+              <div className="p-8 lg:px-10 border-b border-office-border">
+                   <h2 className="text-xl font-black text-slate-900 tracking-tight">Riwayat Permintaan Saya</h2>
+                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Status pengajuan peminjaman dan request barang Anda</p>
+              </div>
+            )}
+
             {/* Tablet/Desktop Table View (Requests) */}
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-slate-50/50">
-                    <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Tgl Pengajuan</th>
+                    {profile?.role === 'admin' && (
+                      <th className="pl-10 py-5 w-10">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedRequestIds.length === paginatedRequests.length && paginatedRequests.length > 0}
+                          onChange={toggleSelectAllRequests}
+                          className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                        />
+                      </th>
+                    )}
+                    <th className={cn("py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]", profile?.role !== 'admin' && "pl-10")}>Tgl Pengajuan</th>
                     <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Tipe</th>
                     <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Barang</th>
                     <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Pemohon</th>
@@ -842,13 +1326,23 @@ export default function InventoryPage() {
                         <td colSpan={5}></td>
                       </tr>
                     ))
-                  ) : filteredRequests.length === 0 ? (
+                  ) : paginatedRequests.length === 0 ? (
                     <tr>
                          <td colSpan={6} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada data permintaan.</td>
                     </tr>
-                  ) : filteredRequests.map((req) => (
-                    <tr key={req.id} className="group hover:bg-slate-50/50 transition-colors">
-                      <td className="px-10 py-6 font-bold text-slate-500">
+                  ) : paginatedRequests.map((req) => (
+                    <tr key={req.id} className={cn("group hover:bg-slate-50/50 transition-colors", selectedRequestIds.includes(req.id) && "bg-brand-50/30")}>
+                      {profile?.role === 'admin' && (
+                        <td className="pl-10 py-6">
+                           <input 
+                              type="checkbox"
+                              checked={selectedRequestIds.includes(req.id)}
+                              onChange={() => toggleSelectRequest(req.id)}
+                              className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                           />
+                        </td>
+                      )}
+                      <td className={cn("py-6 font-bold text-slate-500", profile?.role !== 'admin' && "pl-10")}>
                         {format(new Date(req.created_at), 'dd MMM yyyy')}
                       </td>
                       <td className="px-10 py-6">
@@ -864,7 +1358,17 @@ export default function InventoryPage() {
                       <td className="px-10 py-6">
                         <div className="flex flex-col">
                             <span className="font-black text-slate-900 tracking-tight">{req.item_name}</span>
-                            <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-0.5">{req.quantity} Unit</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">{req.quantity} Unit</span>
+                                {req.type === 'borrow' && req.borrow_start_date && (
+                                    <>
+                                        <div className="w-1 h-1 rounded-full bg-slate-200"></div>
+                                        <span className="text-[10px] text-brand-600 font-black uppercase tracking-widest">
+                                            {format(new Date(req.borrow_start_date), 'dd/MM')} - {format(new Date(req.borrow_end_date!), 'dd/MM')}
+                                        </span>
+                                    </>
+                                )}
+                            </div>
                         </div>
                       </td>
                       <td className="px-10 py-6">
@@ -914,51 +1418,151 @@ export default function InventoryPage() {
                        <div className="h-10 w-full bg-slate-50 rounded-xl"></div>
                     </div>
                   ))
-               ) : filteredRequests.length === 0 ? (
+               ) : paginatedRequests.length === 0 ? (
                   <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Tidak ada permintaan.</div>
-               ) : filteredRequests.map((req) => (
-                  <div key={req.id} onClick={() => {
-                      setSelectedRequest(req);
-                      setAdminNote(req.admin_note || '');
-                      setModalType('request-detail');
-                  }} className="p-6 bg-white active:bg-slate-50 transition-all space-y-4">
-                     <div className="flex items-start justify-between">
-                        <div>
-                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{format(new Date(req.created_at), 'dd MMM yyyy')}</p>
-                           <h3 className="font-black text-slate-900 text-lg leading-tight tracking-tight">{req.item_name}</h3>
+               ) : paginatedRequests.map((req) => (
+                  <div key={req.id} className={cn(
+                    "p-6 bg-white active:bg-slate-50 transition-all space-y-4 flex gap-4",
+                    selectedRequestIds.includes(req.id) && "bg-brand-50/30"
+                  )}>
+                     {profile?.role === 'admin' && (
+                        <div className="pt-2">
+                           <input 
+                              type="checkbox"
+                              checked={selectedRequestIds.includes(req.id)}
+                              onChange={() => toggleSelectRequest(req.id)}
+                              className="w-6 h-6 rounded-xl border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                           />
                         </div>
-                        <span className={cn(
-                            "px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest",
-                            req.type === 'borrow' ? "bg-blue-50 text-blue-600" :
-                            req.type === 'new_item' ? "bg-indigo-50 text-indigo-600" :
-                            "bg-rose-50 text-rose-600"
-                        )}>
-                            {req.type === 'borrow' ? 'Pinjam' : req.type === 'new_item' ? 'Request' : 'Rusak'}
-                        </span>
-                     </div>
+                     )}
+                     <div 
+                        className="flex-1 space-y-4"
+                        onClick={() => {
+                          setSelectedRequest(req);
+                          setAdminNote(req.admin_note || '');
+                          setModalType('request-detail');
+                        }}
+                     >
+                       <div className="flex items-start justify-between">
+                          <div>
+                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                                {format(new Date(req.created_at), 'dd MMM yyyy')}
+                                {req.type === 'borrow' && req.borrow_start_date && (
+                                    <span className="text-brand-600 ml-2">
+                                        • {format(new Date(req.borrow_start_date), 'dd/MM')} - {format(new Date(req.borrow_end_date!), 'dd/MM')}
+                                    </span>
+                                )}
+                             </p>
+                             <h3 className="font-black text-slate-900 text-lg leading-tight tracking-tight">{req.item_name}</h3>
+                          </div>
+                          <span className={cn(
+                              "px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest",
+                              req.type === 'borrow' ? "bg-blue-50 text-blue-600" :
+                              req.type === 'new_item' ? "bg-indigo-50 text-indigo-600" :
+                              "bg-rose-50 text-rose-600"
+                          )}>
+                              {req.type === 'borrow' ? 'Pinjam' : req.type === 'new_item' ? 'Request' : 'Rusak'}
+                          </span>
+                       </div>
 
-                     <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                           <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 font-black text-[10px] uppercase">
-                              {req.user_name.charAt(0)}
-                           </div>
-                           <span className="text-xs font-bold text-slate-600">{req.user_name}</span>
-                        </div>
-                        <div className={cn(
-                            "flex items-center gap-1.5 font-black text-[10px] uppercase tracking-widest",
-                            req.status === 'pending' ? "text-amber-500" :
-                            req.status === 'approved' ? "text-emerald-500" :
-                            "text-rose-500"
-                        )}>
-                           <div className={cn("w-1.5 h-1.5 rounded-full",
-                              req.status === 'pending' ? "bg-amber-500" :
-                              req.status === 'approved' ? "bg-emerald-500" : "bg-rose-500"
-                           )}></div>
-                           {req.status}
-                        </div>
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                             <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 font-black text-[10px] uppercase">
+                                {req.user_name.charAt(0)}
+                             </div>
+                             <span className="text-xs font-bold text-slate-600">{req.user_name}</span>
+                          </div>
+                          <div className={cn(
+                              "flex items-center gap-1.5 font-black text-[10px] uppercase tracking-widest",
+                              req.status === 'pending' ? "text-amber-500" :
+                              req.status === 'approved' ? "text-emerald-500" :
+                              "text-rose-500"
+                          )}>
+                             <div className={cn("w-1.5 h-1.5 rounded-full",
+                                req.status === 'pending' ? "bg-amber-500" :
+                                req.status === 'approved' ? "bg-emerald-500" : "bg-rose-500"
+                             )}></div>
+                             {req.status}
+                          </div>
+                       </div>
                      </div>
                   </div>
                ))}
+            </div>
+
+            {/* Pagination Controls - Requests */}
+            {totalPagesRequests > 1 && (
+              <div className="p-8 border-t border-office-border flex items-center justify-between gap-4 bg-white">
+                <div className="hidden sm:block">
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    Halaman {currentPageRequests} dari {totalPagesRequests}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button 
+                    onClick={() => setCurrentPageRequests(prev => Math.max(1, prev - 1))}
+                    disabled={currentPageRequests === 1}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    <ChevronLeft size={16} /> Prev
+                  </button>
+                  
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPagesRequests) }).map((_, i) => {
+                      let pageNum = i + 1;
+                      if (totalPagesRequests > 5 && currentPageRequests > 3) {
+                        pageNum = Math.min(currentPageRequests - 2 + i, totalPagesRequests - 4 + i);
+                      }
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => setCurrentPageRequests(pageNum)}
+                          className={`hidden sm:flex h-10 w-10 items-center justify-center rounded-xl text-[10px] font-black transition-all ${
+                            currentPageRequests === pageNum 
+                              ? "bg-brand-600 text-white shadow-lg shadow-brand-100" 
+                              : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button 
+                    onClick={() => setCurrentPageRequests(prev => Math.min(totalPagesRequests, prev + 1))}
+                    disabled={currentPageRequests === totalPagesRequests}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Actions Sticky Bar - Requests (Mobile) */}
+            <div className="md:hidden">
+              <AnimatePresence>
+                {selectedRequestIds.length > 0 && (
+                  <motion.div 
+                    initial={{ y: 100 }}
+                    animate={{ y: 0 }}
+                    exit={{ y: 100 }}
+                    className="fixed bottom-24 left-4 right-4 bg-white rounded-[2rem] shadow-2xl border border-office-border p-4 z-[90] flex items-center justify-between"
+                  >
+                    <div className="flex flex-col pl-4">
+                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{selectedRequestIds.length} Permintaan Terpilih</span>
+                       <span className="font-black text-slate-900">Opsi Hapus Masal</span>
+                    </div>
+                    <button 
+                      onClick={handleBulkDeleteRequests}
+                      className="bg-rose-600 text-white px-6 py-4 rounded-3xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all shadow-lg shadow-rose-200"
+                    >
+                      Hapus ({selectedRequestIds.length})
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
         </div>
       )}
@@ -966,8 +1570,8 @@ export default function InventoryPage() {
       {/* Item Action Modals */}
       {modalType && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-            <div className="bg-white rounded-[2rem] w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                <div className="p-8 border-b border-office-border flex justify-between items-center bg-office-gray">
+            <div className="bg-white rounded-[2rem] w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+                <div className="p-8 border-b border-office-border flex justify-between items-center bg-white sticky top-0 z-10">
                     <div>
                         <h2 className="text-xl font-black text-office-slate-800 uppercase tracking-tight">
                             {modalType === 'add-item' && (editingItem ? 'Edit Barang' : 'Tambah Barang Baru')}
@@ -984,12 +1588,12 @@ export default function InventoryPage() {
                         setEditingItem(null);
                         setItemFormData({ name: '', quantity: 1, condition: 'Baik', location: '' });
                         setImportData([]);
-                    }} className="p-2 hover:bg-white rounded-full transition-colors text-slate-400">
+                    }} className="h-12 w-12 flex items-center justify-center bg-slate-50 text-slate-400 rounded-2xl hover:bg-slate-100 transition-all active:scale-95">
                         <X size={24} />
                     </button>
                 </div>
 
-                <div className="p-8">
+                <div className="p-8 overflow-y-auto">
                     {modalType === 'import-excel' ? (
                         <div className="space-y-6">
                             <div className="bg-brand-50 p-6 rounded-[2rem] border border-brand-100 text-center">
@@ -1114,10 +1718,31 @@ export default function InventoryPage() {
                                     <p className={cn(
                                         "font-bold uppercase text-xs",
                                         selectedRequest?.status === 'pending' ? 'text-amber-500' : 
-                                        selectedRequest?.status === 'approved' ? 'text-green-500' : 'text-rose-500'
-                                    )}>{selectedRequest?.status === 'pending' ? 'Menunggu' : selectedRequest?.status === 'approved' ? 'Disetujui' : 'Ditolak'}</p>
+                                        selectedRequest?.status === 'approved' ? 'text-emerald-500' : 
+                                        selectedRequest?.status === 'returned' ? 'text-blue-500' : 'text-rose-500'
+                                    )}>{selectedRequest?.status === 'pending' ? 'Menunggu' : 
+                                        selectedRequest?.status === 'approved' ? 'Disetujui / Dipinjam' : 
+                                        selectedRequest?.status === 'returned' ? 'Sudah Kembali' : 'Ditolak'}</p>
                                 </div>
                             </div>
+
+                            {selectedRequest?.type === 'borrow' && selectedRequest.borrow_start_date && (
+                                <div className="bg-indigo-50 p-5 rounded-2xl border border-indigo-100">
+                                    <p className="text-[10px] font-black text-indigo-400 uppercase mb-2 tracking-widest">Periode Peminjaman</p>
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] font-bold text-indigo-400 uppercase">Mulai</span>
+                                            <span className="font-black text-indigo-900">{format(new Date(selectedRequest.borrow_start_date), 'dd MMM yyyy')}</span>
+                                        </div>
+                                        <div className="h-0.5 w-8 bg-indigo-200 rounded-full"></div>
+                                        <div className="flex flex-col text-right">
+                                            <span className="text-[10px] font-bold text-indigo-400 uppercase">Hingga</span>
+                                            <span className="font-black text-indigo-900">{format(new Date(selectedRequest.borrow_end_date!), 'dd MMM yyyy')}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="bg-office-gray p-5 rounded-2xl">
                                 <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">Barang & Kebutuhan</p>
                                 <p className="font-bold text-gray-900 text-lg leading-tight">{selectedRequest?.item_name}</p>
@@ -1152,13 +1777,23 @@ export default function InventoryPage() {
                                         <button 
                                             onClick={() => handleUpdateStatus('approved')}
                                             disabled={isSubmitting}
-                                            className="flex-3 bg-green-600 text-white font-bold uppercase py-4 rounded-2xl hover:bg-green-700 transition-all shadow-lg shadow-green-100 disabled:opacity-50"
+                                            className="flex-[3] bg-brand-600 text-white font-bold uppercase py-4 rounded-2xl hover:bg-brand-700 transition-all shadow-lg shadow-brand-100 disabled:opacity-50"
                                         >
                                             Setujui
                                         </button>
                                     </div>
                                 </div>
-                            ) : selectedRequest?.admin_note && (
+                             ) : profile?.role === 'admin' && selectedRequest?.status === 'approved' && selectedRequest?.type === 'borrow' ? (
+                                <div className="pt-4 border-t border-office-border space-y-4">
+                                     <button 
+                                         onClick={() => handleUpdateStatus('returned')}
+                                         disabled={isSubmitting}
+                                         className="w-full bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] py-5 rounded-2xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all disabled:opacity-50"
+                                     >
+                                         Selesaikan & Kembalikan Barang ke Stok
+                                     </button>
+                                </div>
+                             ) : selectedRequest?.admin_note && (
                                 <div className="pt-4 border-t border-office-border">
                                      <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Catatan Admin</p>
                                      <div className="bg-brand-50/50 p-4 rounded-2xl text-brand-700 text-sm font-bold">
@@ -1188,6 +1823,31 @@ export default function InventoryPage() {
                                 <input required type="number" min="1" max={modalType === 'borrow' ? (selectedItem?.quantity || 1) : 100} value={requestFormData.quantity} onChange={e => setRequestFormData({...requestFormData, quantity: parseInt(e.target.value)})} className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500"/>
                             </div>
 
+                            {requestFormData.type === 'borrow' && (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Mulai Pinjam</label>
+                                        <input 
+                                            required 
+                                            type="date" 
+                                            value={requestFormData.borrow_start_date} 
+                                            onChange={e => setRequestFormData({...requestFormData, borrow_start_date: e.target.value})} 
+                                            className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Selesai Pinjam</label>
+                                        <input 
+                                            required 
+                                            type="date" 
+                                            value={requestFormData.borrow_end_date} 
+                                            onChange={e => setRequestFormData({...requestFormData, borrow_end_date: e.target.value})} 
+                                            className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Alasan & Detail</label>
                                 <textarea required value={requestFormData.reason} onChange={e => setRequestFormData({...requestFormData, reason: e.target.value})} className="w-full bg-office-gray border-none rounded-xl p-4 text-sm font-bold focus:ring-2 focus:ring-brand-500 h-28" placeholder={modalType === 'report-damage' ? "Jelaskan kronologi kerusakan..." : "Kenapa Anda membutuhkan barang ini?"}/>
@@ -1206,7 +1866,13 @@ export default function InventoryPage() {
       {/* Delete Confirmation Modal */}
       {deletingId && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className="bg-white rounded-[2rem] w-full max-w-sm shadow-2xl p-8 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-[2rem] w-full max-w-sm shadow-2xl p-8 animate-in fade-in zoom-in-95 duration-200 relative">
+            <button 
+                onClick={() => setDeletingId(null)}
+                className="absolute top-6 right-6 p-2 h-10 w-10 flex items-center justify-center bg-slate-50 text-slate-400 rounded-full hover:bg-slate-100 transition-all active:scale-95"
+            >
+                <X size={20} />
+            </button>
             <div className="flex flex-col items-center text-center space-y-4">
               <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center">
                 <Trash2 size={32} />

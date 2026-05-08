@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useAuth } from '../../lib/AuthContext';
 import { supabase, LeaveRequest } from '../../lib/supabase';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileText, 
   Clock, 
@@ -12,6 +13,7 @@ import {
   Filter,
   User,
   ChevronRight,
+  ChevronLeft,
   Trash2,
   Image as ImageIcon
 } from 'lucide-react';
@@ -31,6 +33,16 @@ export default function LeaveRequestsPage() {
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [rejectionNote, setRejectionNote] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
+  const toast = (message: string) => {
+    alert(message);
+  };
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
 
   // Form State
   const [formData, setFormData] = useState({
@@ -294,7 +306,12 @@ export default function LeaveRequestsPage() {
       const updated = current.filter(r => r.id !== deletingId);
       localStorage.setItem('officio_demo_leaves', JSON.stringify(updated));
       
-      new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_REQUIRED' });
+      try {
+        const channel = new BroadcastChannel('officio_demo_sync');
+        channel.postMessage({ type: 'REFRESH_REQUIRED' });
+        channel.close();
+      } catch (e) {}
+      
       setDeletingId(null);
       setIsSubmitting(false);
       fetchRequests();
@@ -316,6 +333,70 @@ export default function LeaveRequestsPage() {
       setIsSubmitting(false);
     }
   };
+
+  // Selection Logic
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === paginatedRequests.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(paginatedRequests.map(r => r.id));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!profile || profile.role !== 'admin' || selectedIds.length === 0) return;
+    
+    if (!confirm(`Hapus ${selectedIds.length} pengajuan terpilih?`)) return;
+
+    setIsBulkDeleting(true);
+    try {
+      if (isDemo) {
+        const stored = localStorage.getItem('officio_demo_leaves');
+        const current: LeaveRequest[] = stored ? JSON.parse(stored) : [];
+        const updated = current.filter(r => !selectedIds.includes(r.id));
+        localStorage.setItem('officio_demo_leaves', JSON.stringify(updated));
+        
+        try {
+          const channel = new BroadcastChannel('officio_demo_sync');
+          channel.postMessage({ type: 'REFRESH_REQUIRED' });
+          channel.close();
+        } catch (e) {}
+      } else {
+        const { error } = await supabase
+          .from('leave_requests')
+          .delete()
+          .in('id', selectedIds);
+        
+        if (error) throw error;
+      }
+      
+      setSelectedIds([]);
+      toast(`${selectedIds.length} pengajuan berhasil dihapus!`);
+      fetchRequests();
+    } catch (err: any) {
+      console.error('Bulk delete failed:', err);
+      alert('Gagal menghapus beberapa data: ' + (err.message || 'Error tidak diketahui'));
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  // Pagination Logic
+  const totalPages = Math.ceil(requests.length / itemsPerPage);
+  const paginatedRequests = requests.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [requests.length]);
 
   return (
     <div className="space-y-8">
@@ -612,17 +693,52 @@ export default function LeaveRequestsPage() {
         {/* List of Requests */}
         <div className="lg:col-span-3 space-y-6">
           <div className="bg-white rounded-3xl border border-office-border shadow-sm overflow-hidden text-sm">
-             <div className="p-8 border-b border-office-border flex items-center justify-between">
-                <h2 className="text-xl font-bold text-gray-900">Daftar Pengajuan</h2>
-                <button className="flex items-center gap-2 text-gray-500 font-bold hover:text-brand-600 transition-colors">
-                   <Filter className="h-4 w-4" /> Filter Status
-                </button>
+             <div className="p-8 border-b border-office-border flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                   {profile?.role === 'admin' && (
+                     <input 
+                       type="checkbox" 
+                       checked={selectedIds.length === paginatedRequests.length && paginatedRequests.length > 0}
+                       onChange={toggleSelectAll}
+                       className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                     />
+                   )}
+                   <h2 className="text-xl font-bold text-gray-900">Daftar Pengajuan</h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  {profile?.role === 'admin' && selectedIds.length > 0 && (
+                    <button 
+                      onClick={handleBulkDelete}
+                      className="hidden md:flex items-center gap-2 h-10 px-4 bg-rose-600 rounded-xl text-[10px] font-black uppercase tracking-widest text-white hover:bg-rose-700 transition-all active:scale-95 shadow-lg shadow-rose-100"
+                    >
+                      <Trash2 size={14} /> Hapus ({selectedIds.length})
+                    </button>
+                  )}
+                  <button className="flex items-center gap-2 text-gray-500 font-bold hover:text-brand-600 transition-colors">
+                     <Filter className="h-4 w-4" /> Filter
+                  </button>
+                </div>
              </div>
 
              <div className="divide-y divide-office-border">
-                {requests.map((request) => (
-                  <div key={request.id} className="p-8 flex flex-col sm:flex-row gap-6 hover:bg-gray-50 transition-colors">
-                     <div className="sm:w-20 shrink-0 flex flex-col items-center">
+                {paginatedRequests.length === 0 ? (
+                  <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Belum ada pengajuan.</div>
+                ) : paginatedRequests.map((request) => (
+                  <div key={request.id} className={cn(
+                    "p-8 flex flex-col sm:flex-row gap-6 hover:bg-gray-50 transition-colors relative",
+                    selectedIds.includes(request.id) && "bg-brand-50/30"
+                  )}>
+                     {profile?.role === 'admin' && (
+                       <div className="absolute top-8 left-8 sm:relative sm:top-0 sm:left-0 pt-2">
+                          <input 
+                            type="checkbox"
+                            checked={selectedIds.includes(request.id)}
+                            onChange={() => toggleSelect(request.id)}
+                            className="w-6 h-6 rounded-xl border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                          />
+                       </div>
+                     )}
+                     <div className="sm:w-20 shrink-0 flex flex-col items-center ml-10 sm:ml-0">
                         <div className={cn(
                            "w-12 h-12 rounded-2xl flex items-center justify-center mb-2",
                            request.type === 'cuti' ? "bg-indigo-50 text-indigo-600" : "bg-rose-50 text-rose-600"
@@ -740,6 +856,81 @@ export default function LeaveRequestsPage() {
                   </div>
                 ))}
              </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="p-8 border-t border-office-border flex items-center justify-between gap-4 bg-white">
+                <div className="hidden sm:block">
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    Halaman {currentPage} dari {totalPages}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button 
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    <ChevronLeft size={16} /> Prev
+                  </button>
+                  
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }).map((_, i) => {
+                      let pageNum = i + 1;
+                      if (totalPages > 5 && currentPage > 3) {
+                        pageNum = Math.min(currentPage - 2 + i, totalPages - 4 + i);
+                      }
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`hidden sm:flex h-10 w-10 items-center justify-center rounded-xl text-[10px] font-black transition-all ${
+                            currentPage === pageNum 
+                              ? "bg-brand-600 text-white shadow-lg shadow-brand-100" 
+                              : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button 
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Actions Sticky Bar - Mobile */}
+            <div className="md:hidden">
+              <AnimatePresence>
+                {profile?.role === 'admin' && selectedIds.length > 0 && (
+                  <motion.div 
+                    initial={{ y: 100 }}
+                    animate={{ y: 0 }}
+                    exit={{ y: 100 }}
+                    className="fixed bottom-24 left-4 right-4 bg-white rounded-[2rem] shadow-2xl border border-office-border p-4 z-[90] flex items-center justify-between"
+                  >
+                    <div className="flex flex-col pl-4">
+                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{selectedIds.length} Pengajuan Terpilih</span>
+                       <span className="font-black text-slate-900">Hapus Masal</span>
+                    </div>
+                    <button 
+                      onClick={handleBulkDelete}
+                      className="bg-rose-600 text-white px-6 py-4 rounded-3xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all shadow-lg shadow-rose-200"
+                    >
+                      Hapus ({selectedIds.length})
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </div>

@@ -68,7 +68,7 @@ export interface InventoryItem {
 }
 
 export type InventoryRequestType = 'borrow' | 'new_item' | 'report_damage';
-export type InventoryRequestStatus = 'pending' | 'approved' | 'rejected';
+export type InventoryRequestStatus = 'pending' | 'approved' | 'rejected' | 'returned';
 
 export interface InventoryRequest {
   id: string;
@@ -79,6 +79,8 @@ export interface InventoryRequest {
   type: InventoryRequestType;
   quantity: number;
   reason: string;
+  borrow_start_date?: string;
+  borrow_end_date?: string;
   status: InventoryRequestStatus;
   admin_note?: string;
   created_at: string;

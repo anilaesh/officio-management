@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useAuth } from '../../lib/AuthContext';
 import { supabase, Attendance } from '../../lib/supabase';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Clock, 
   Calendar, 
@@ -14,7 +15,9 @@ import {
   UserCheck,
   XCircle,
   User,
-  Trash2
+  Trash2,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import { id } from 'date-fns/locale';
@@ -26,7 +29,61 @@ export default function AttendancePage() {
   const [loading, setLoading] = useState(true);
   const [todayAttendance, setTodayAttendance] = useState<Attendance | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+
+  // Selection Logic
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === paginatedHistory.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(paginatedHistory.map(r => r.id));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!profile || profile.role !== 'admin' || selectedIds.length === 0) return;
+    
+    if (!confirm(`Hapus ${selectedIds.length} data absensi terpilih?`)) return;
+
+    setIsProcessing(true);
+    try {
+      if (isDemo) {
+        const stored = localStorage.getItem('officio_demo_attendance');
+        const current = stored ? JSON.parse(stored) : [];
+        const updated = current.filter((rec: any) => !selectedIds.includes(rec.id));
+        localStorage.setItem('officio_demo_attendance', JSON.stringify(updated));
+        
+        try {
+          const channel = new BroadcastChannel('officio_demo_sync');
+          channel.postMessage({ type: 'REFRESH_REQUIRED' });
+          channel.close();
+        } catch (e) {}
+      } else {
+        const { error } = await supabase.from('attendance').delete().in('id', selectedIds);
+        if (error) throw error;
+      }
+      
+      setSelectedIds([]);
+      fetchAttendance();
+    } catch (err: any) {
+      console.error('Bulk delete failed:', err);
+      alert('Gagal menghapus beberapa data: ' + (err.message || 'Error tidak diketahui'));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 8;
 
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -382,6 +439,42 @@ export default function AttendancePage() {
     }
   };
 
+  const confirmDeleteAll = async () => {
+    if (!profile || profile.role !== 'admin') return;
+    setIsProcessing(true);
+
+    if (isDemo) {
+      localStorage.setItem('officio_demo_attendance', JSON.stringify([]));
+      new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_REQUIRED' });
+      setIsDeletingAll(false);
+      setIsProcessing(false);
+      fetchAttendance();
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from('attendance').delete().neq('id', '0');
+      if (error) throw error;
+      setIsDeletingAll(false);
+      fetchAttendance();
+    } catch (err) {
+      console.error('Error deleting all attendance:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Pagination Logic
+  const totalPages = Math.ceil(history.length / itemsPerPage);
+  const paginatedHistory = history.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [history.length]);
+
   return (
     <div className="space-y-8">
       {/* Manual Attendance Modal */}
@@ -610,7 +703,7 @@ export default function AttendancePage() {
         {/* Attendance History */}
         <div className="lg:col-span-2 space-y-6 order-2 lg:order-2">
           <div className="bg-white rounded-[2.5rem] border border-office-border shadow-sm overflow-hidden text-sm">
-            <div className="p-8 lg:px-10 border-b border-office-border flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+            <div className="p-8 lg:px-10 border-b border-office-border flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div>
                 <h2 className="text-2xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
                   Riwayat
@@ -619,11 +712,24 @@ export default function AttendancePage() {
                 <p className="text-slate-400 font-bold text-xs mt-1">Status kehadiran 30 hari terakhir</p>
               </div>
               <div className="flex gap-2">
+                {profile?.role === 'admin' && selectedIds.length > 0 && (
+                  <button 
+                    onClick={handleBulkDelete}
+                    className="flex-1 md:flex-none flex items-center justify-center gap-2 h-12 px-6 bg-rose-600 rounded-2xl text-xs font-black uppercase tracking-widest text-white hover:bg-rose-700 transition-all active:scale-95 shadow-lg shadow-rose-100"
+                  >
+                    <Trash2 size={16} /> Hapus Terpilih ({selectedIds.length})
+                  </button>
+                )}
+                {profile?.role === 'admin' && history.length > 0 && (
+                  <button 
+                    onClick={() => setIsDeletingAll(true)}
+                    className="flex items-center gap-3 h-12 px-6 bg-rose-50 border border-rose-100 rounded-2xl hover:bg-rose-100 transition-all font-black text-rose-600 text-xs uppercase tracking-widest active:scale-95"
+                  >
+                    <Trash2 size={16} /> Hapus Semua
+                  </button>
+                )}
                 <button className="h-12 w-12 flex items-center justify-center bg-slate-50 border border-office-border rounded-2xl hover:bg-slate-100 transition-all text-slate-400 active:scale-95">
                   <Search size={20} />
-                </button>
-                <button className="flex items-center gap-3 h-12 px-6 bg-slate-50 border border-office-border rounded-2xl hover:bg-slate-100 transition-all font-black text-slate-600 text-xs uppercase tracking-widest active:scale-95">
-                  <Filter size={16} /> Filter
                 </button>
               </div>
             </div>
@@ -633,7 +739,17 @@ export default function AttendancePage() {
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-slate-50/50">
-                    <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Tanggal</th>
+                    {profile?.role === 'admin' && (
+                      <th className="pl-10 py-5 w-10">
+                        <input 
+                          type="checkbox" 
+                          checked={selectedIds.length === paginatedHistory.length && paginatedHistory.length > 0}
+                          onChange={toggleSelectAll}
+                          className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                        />
+                      </th>
+                    )}
+                    <th className={cn("py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]", profile?.role !== 'admin' && "pl-10")}>Tanggal</th>
                     <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Masuk</th>
                     <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Pulang</th>
                     <th className="px-10 py-5 font-black text-slate-400 uppercase tracking-widest text-[10px]">Status</th>
@@ -644,13 +760,23 @@ export default function AttendancePage() {
                   {loading ? (
                     [...Array(5)].map((_, i) => (
                       <tr key={i} className="animate-pulse">
-                        <td colSpan={5} className="px-10 py-8 h-20"><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
+                        <td colSpan={6} className="px-10 py-8 h-20"><div className="h-4 w-full bg-slate-100 rounded-full"></div></td>
                       </tr>
                     ))
-                  ) : history.length > 0 ? (
-                    history.map((record: any) => (
-                      <tr key={record.id} className="group hover:bg-slate-50/50 transition-colors">
-                        <td className="px-10 py-6">
+                  ) : paginatedHistory.length > 0 ? (
+                    paginatedHistory.map((record: any) => (
+                      <tr key={record.id} className={cn("group hover:bg-slate-50/50 transition-colors", selectedIds.includes(record.id) && "bg-brand-50/30")}>
+                        {profile?.role === 'admin' && (
+                          <td className="pl-10 py-6">
+                            <input 
+                              type="checkbox"
+                              checked={selectedIds.includes(record.id)}
+                              onChange={() => toggleSelect(record.id)}
+                              className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                            />
+                          </td>
+                        )}
+                        <td className={cn("py-6", profile?.role !== 'admin' && "pl-10")}>
                           <div className="flex flex-col">
                             <span className="font-black text-slate-900 text-base tracking-tight">{format(new Date(record.date), 'dd MMM yyyy', { locale: id })}</span>
                             {profile?.role === 'admin' && record.profiles?.full_name && (
@@ -720,47 +846,74 @@ export default function AttendancePage() {
                        </div>
                     </div>
                  ))
-              ) : history.length > 0 ? (
-                history.map((record: any) => (
-                  <div key={record.id} className="p-6 space-y-4 bg-white active:bg-slate-50 transition-colors">
-                    <div className="flex items-center justify-between">
-                       <div className="flex flex-col">
-                          <span className="font-black text-slate-900 text-lg tracking-tight">{format(new Date(record.date), 'dd MMM yyyy', { locale: id })}</span>
-                          {profile?.role === 'admin' && record.profiles?.full_name && (
-                            <span className="text-[10px] text-brand-600 font-black uppercase tracking-widest">{record.profiles.full_name}</span>
-                          )}
-                       </div>
-                       <span className={cn(
-                          "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest",
-                          record.status === 'present' ? "bg-emerald-50 text-emerald-600" :
-                          record.status === 'late' ? "bg-amber-50 text-amber-600" :
-                          "bg-rose-50 text-rose-600"
-                       )}>
-                          {record.status === 'present' ? 'On Time' : record.status === 'late' ? 'Late' : 'Absent'}
-                       </span>
+              ) : paginatedHistory.length > 0 ? (
+                paginatedHistory.map((record: any) => (
+                  <div key={record.id} className={cn("relative overflow-hidden bg-white first:rounded-t-[2.5rem] last:rounded-b-[2.5rem]", selectedIds.includes(record.id) && "bg-brand-50/30")}>
+                    {/* Swipe Action Background */}
+                    <div className="absolute inset-0 flex justify-end items-stretch">
+                       <button 
+                          onClick={() => setDeletingId(record.id)}
+                          className="w-24 bg-rose-600 text-white flex flex-col items-center justify-center gap-1 active:bg-rose-700 transition-colors"
+                       >
+                          <Trash2 size={24} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">Hapus</span>
+                       </button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                       <div className="bg-slate-50 rounded-2xl p-3 flex flex-col items-center justify-center border border-slate-100">
-                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Masuk</span>
-                          <span className="font-black text-slate-700 text-lg">{record.check_in?.substring(0, 5) || '--:--'}</span>
-                       </div>
-                       <div className="bg-slate-50 rounded-2xl p-3 flex flex-col items-center justify-center border border-slate-100">
-                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Pulang</span>
-                          <span className="font-black text-slate-700 text-lg">{record.check_out?.substring(0, 5) || '--:--'}</span>
-                       </div>
-                    </div>
+                    {/* Draggable Card */}
+                    <motion.div 
+                      drag="x"
+                      dragConstraints={{ left: profile?.role === 'admin' ? -96 : 0, right: 0 }}
+                      dragElastic={0.1}
+                      className={cn("relative p-6 flex gap-4 bg-white border-b border-office-border last:border-b-0", selectedIds.includes(record.id) && "bg-brand-50/30")}
+                    >
+                      {profile?.role === 'admin' && (
+                        <div className="pt-1">
+                           <input 
+                              type="checkbox"
+                              checked={selectedIds.includes(record.id)}
+                              onChange={() => toggleSelect(record.id)}
+                              className="w-6 h-6 rounded-xl border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                           />
+                        </div>
+                      )}
+                      
+                      <div className="flex-1 space-y-4">
+                        <div className="flex items-center justify-between">
+                           <div className="flex flex-col">
+                              <span className="font-black text-slate-900 text-lg tracking-tight">{format(new Date(record.date), 'dd MMM yyyy', { locale: id })}</span>
+                              {profile?.role === 'admin' && record.profiles?.full_name && (
+                                <span className="text-[10px] text-brand-600 font-black uppercase tracking-widest">{record.profiles.full_name}</span>
+                              )}
+                           </div>
+                           <span className={cn(
+                              "px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest",
+                              record.status === 'present' ? "bg-emerald-50 text-emerald-600" :
+                              record.status === 'late' ? "bg-amber-50 text-amber-600" :
+                              "bg-rose-50 text-rose-600"
+                           )}>
+                              {record.status === 'present' ? 'On Time' : record.status === 'late' ? 'Late' : 'Absent'}
+                           </span>
+                        </div>
 
-                    {profile?.role === 'admin' && (
-                       <div className="flex justify-end pt-2">
-                          <button 
-                            onClick={() => setDeletingId(record.id)}
-                            className="flex items-center gap-2 px-4 py-2 bg-rose-50 text-rose-600 rounded-xl text-[10px] font-black uppercase tracking-widest active:scale-95 transition-all"
-                          >
-                             <Trash2 size={14} /> Hapus Data
-                          </button>
-                       </div>
-                    )}
+                        <div className="grid grid-cols-2 gap-3">
+                           <div className="bg-slate-50 rounded-2xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Masuk</span>
+                              <span className="font-black text-slate-700 text-lg">{record.check_in?.substring(0, 5) || '--:--'}</span>
+                           </div>
+                           <div className="bg-slate-50 rounded-2xl p-3 flex flex-col items-center justify-center border border-slate-100">
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Pulang</span>
+                              <span className="font-black text-slate-700 text-lg">{record.check_out?.substring(0, 5) || '--:--'}</span>
+                           </div>
+                        </div>
+
+                        {profile?.role === 'admin' && (
+                          <div className="mt-2 text-center">
+                            <p className="text-[9px] text-slate-300 font-black uppercase tracking-widest">← Swipe ke kiri untuk hapus</p>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
                   </div>
                 ))
               ) : (
@@ -768,6 +921,81 @@ export default function AttendancePage() {
                    Tidak ada data.
                 </div>
               )}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="p-8 border-t border-office-border flex items-center justify-between gap-4 bg-white">
+                <div className="hidden sm:block">
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                    Halaman {currentPage} dari {totalPages}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 w-full sm:w-auto">
+                  <button 
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    <ChevronLeft size={16} /> Prev
+                  </button>
+                  
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }).map((_, i) => {
+                      let pageNum = i + 1;
+                      if (totalPages > 5 && currentPage > 3) {
+                        pageNum = Math.min(currentPage - 2 + i, totalPages - 4 + i);
+                      }
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`hidden sm:flex h-10 w-10 items-center justify-center rounded-xl text-[10px] font-black transition-all ${
+                            currentPage === pageNum 
+                              ? "bg-brand-600 text-white shadow-lg shadow-brand-100" 
+                              : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button 
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Bulk Actions Sticky Bar - Mobile */}
+            <div className="md:hidden">
+              <AnimatePresence>
+                {profile?.role === 'admin' && selectedIds.length > 0 && (
+                  <motion.div 
+                    initial={{ y: 100 }}
+                    animate={{ y: 0 }}
+                    exit={{ y: 100 }}
+                    className="fixed bottom-24 left-4 right-4 bg-white rounded-[2rem] shadow-2xl border border-office-border p-4 z-[90] flex items-center justify-between"
+                  >
+                    <div className="flex flex-col pl-4">
+                       <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{selectedIds.length} Absensi Terpilih</span>
+                       <span className="font-black text-slate-900">Hapus Masal</span>
+                    </div>
+                    <button 
+                      onClick={handleBulkDelete}
+                      className="bg-rose-600 text-white px-6 py-4 rounded-3xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all shadow-lg shadow-rose-200"
+                    >
+                      Hapus ({selectedIds.length})
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             
             <div className="p-8 bg-slate-50/50 border-t border-office-border text-center">
@@ -778,6 +1006,44 @@ export default function AttendancePage() {
       </div>
 
       {/* Delete Confirmation Modal */}
+      {isDeletingAll && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div 
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="bg-white rounded-[2.5rem] w-full max-w-sm shadow-2xl p-8"
+          >
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-[2rem] flex items-center justify-center">
+                <Trash2 size={40} />
+              </div>
+              <div>
+                <h3 className="text-2xl font-black text-gray-900 tracking-tight">Hapus Semua Absensi?</h3>
+                <p className="text-sm font-medium text-gray-500 mt-2">
+                  Tindakan ini akan menghapus seluruh riwayat absensi semua karyawan. Data tidak dapat dipulihkan.
+                </p>
+              </div>
+              <div className="flex flex-col w-full gap-3 mt-6">
+                <button 
+                  onClick={confirmDeleteAll}
+                  disabled={isProcessing}
+                  className="w-full bg-rose-600 text-white font-black py-4 rounded-2xl hover:bg-rose-700 transition-all uppercase tracking-widest text-xs active:scale-95 disabled:opacity-50"
+                >
+                  Ya, Hapus Semua
+                </button>
+                <button 
+                  onClick={() => setIsDeletingAll(false)}
+                  className="w-full bg-slate-100 text-slate-600 font-black py-4 rounded-2xl hover:bg-slate-200 transition-all uppercase tracking-widest text-xs active:scale-95"
+                >
+                  Batal
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal (Single) */}
       {deletingId && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className="bg-white rounded-[2rem] w-full max-w-sm shadow-2xl p-8 animate-in fade-in zoom-in-95 duration-200">

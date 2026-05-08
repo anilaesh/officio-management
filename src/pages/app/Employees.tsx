@@ -1,6 +1,7 @@
 import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
 import { useAuth } from '../../lib/AuthContext';
 import { supabase } from '../../lib/supabase';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Users, 
   Search, 
@@ -19,7 +20,9 @@ import {
   FileDown,
   Upload,
   UserPlus,
-  Crown
+  Crown,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
@@ -47,6 +50,11 @@ export default function EmployeesPage() {
   const [editingEmployee, setEditingEmployee] = useState<any>(null);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
   
   const [formData, setFormData] = useState({
     name: '',
@@ -415,6 +423,67 @@ export default function EmployeesPage() {
     emp.email.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Pagination Logic
+  const totalPages = Math.ceil(filteredEmployees.length / itemsPerPage);
+  const paginatedEmployees = filteredEmployees.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
+
+  // Selection Logic
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filteredEmployees.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredEmployees.map(e => e.id));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!profile || profile.role !== 'admin' || selectedIds.length === 0) return;
+    
+    if (!confirm(`Hapus ${selectedIds.length} karyawan terpilih?`)) return;
+
+    setIsSubmitting(true);
+    try {
+      if (effectivelyDemo) {
+        const stored = localStorage.getItem('officio_demo_employees');
+        const current = stored ? JSON.parse(stored) : [];
+        const updated = current.filter((emp: any) => !selectedIds.includes(emp.id));
+        localStorage.setItem('officio_demo_employees', JSON.stringify(updated));
+        
+        try {
+          const channel = new BroadcastChannel('officio_demo_sync');
+          channel.postMessage({ type: 'REFRESH_EMPLOYEES' });
+          channel.close();
+        } catch (e) {}
+      } else {
+        const { error } = await supabase.from('profiles').delete().in('id', selectedIds);
+        if (error) throw error;
+      }
+      
+      setShowSuccessToast(true);
+      setSelectedIds([]);
+      setTimeout(() => setShowSuccessToast(false), 3000);
+      fetchEmployees();
+    } catch (err: any) {
+      console.error('Bulk delete failed:', err);
+      alert('Gagal menghapus beberapa karyawan: ' + (err.message || 'Error tidak diketahui'));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       {/* Success Toast */}
@@ -703,6 +772,14 @@ export default function EmployeesPage() {
              />
           </div>
           <div className="flex gap-2">
+            {profile?.role === 'admin' && selectedIds.length > 0 && (
+              <button 
+                onClick={handleBulkDelete}
+                className="hidden md:flex items-center justify-center gap-2 h-12 px-6 bg-rose-600 rounded-2xl text-xs font-black uppercase tracking-widest text-white hover:bg-rose-700 transition-all active:scale-95 shadow-lg shadow-rose-100"
+              >
+                <Trash2 size={16} /> Hapus ({selectedIds.length})
+              </button>
+            )}
             <button className="flex-1 md:flex-none flex items-center justify-center gap-2 h-12 px-6 bg-slate-50 rounded-2xl text-xs font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 transition-all active:scale-95">
               <Filter className="h-4 w-4" /> Filter
             </button>
@@ -714,7 +791,17 @@ export default function EmployeesPage() {
           <table className="w-full text-left">
             <thead>
               <tr className="bg-slate-50/50">
-                <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Informasi Karyawan</th>
+                {profile?.role === 'admin' && (
+                  <th className="pl-10 py-5 w-10">
+                    <input 
+                      type="checkbox"
+                      checked={selectedIds.length === filteredEmployees.length && filteredEmployees.length > 0}
+                      onChange={toggleSelectAll}
+                      className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                    />
+                  </th>
+                )}
+                <th className={`${profile?.role === 'admin' ? 'px-4' : 'px-10'} py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]`}>Informasi Karyawan</th>
                 <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Jabatan</th>
                 <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Role</th>
                 <th className="px-10 py-5 font-black text-slate-400 font-black uppercase tracking-widest text-[10px]">Kontak</th>
@@ -729,15 +816,25 @@ export default function EmployeesPage() {
                     <td colSpan={4}></td>
                   </tr>
                 ))
-              ) : filteredEmployees.length === 0 ? (
+              ) : paginatedEmployees.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-10 py-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">
                     Tidak ada data karyawan ditemukan.
                   </td>
                 </tr>
-              ) : filteredEmployees.map((emp) => (
-                <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors group">
-                  <td className="px-10 py-6">
+              ) : paginatedEmployees.map((emp) => (
+                <tr key={emp.id} className={`hover:bg-slate-50/50 transition-colors group ${selectedIds.includes(emp.id) ? 'bg-brand-50/30' : ''}`}>
+                  {profile?.role === 'admin' && (
+                    <td className="pl-10 py-6">
+                      <input 
+                        type="checkbox"
+                        checked={selectedIds.includes(emp.id)}
+                        onChange={() => toggleSelect(emp.id)}
+                        className="w-5 h-5 rounded-lg border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                      />
+                    </td>
+                  )}
+                  <td className={`${profile?.role === 'admin' ? 'px-4' : 'px-10'} py-6`}>
                     <div className="flex items-center gap-4">
                        <div className="h-14 w-14 rounded-[1.25rem] bg-brand-50 flex items-center justify-center text-brand-600 font-black text-xl transition-transform group-hover:scale-110">
                           {emp.name.charAt(0)}
@@ -813,12 +910,22 @@ export default function EmployeesPage() {
                    <div className="h-12 w-full bg-slate-50 rounded-2xl"></div>
                 </div>
              ))
-          ) : filteredEmployees.length === 0 ? (
+          ) : paginatedEmployees.length === 0 ? (
              <div className="p-20 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Tidak ada data karyawan.</div>
-          ) : filteredEmployees.map((emp) => (
-             <div key={emp.id} className="p-6 bg-white active:bg-slate-50 transition-all space-y-4">
+          ) : paginatedEmployees.map((emp) => (
+             <div key={emp.id} className={`p-6 bg-white active:bg-slate-50 transition-all space-y-4 ${selectedIds.includes(emp.id) ? 'bg-brand-50/30' : ''}`}>
                 <div className="flex items-start justify-between">
                    <div className="flex items-center gap-4">
+                      {profile?.role === 'admin' && (
+                        <div className="mr-2">
+                           <input 
+                              type="checkbox"
+                              checked={selectedIds.includes(emp.id)}
+                              onChange={() => toggleSelect(emp.id)}
+                              className="w-6 h-6 rounded-xl border-slate-300 text-brand-600 focus:ring-brand-500 cursor-pointer"
+                           />
+                        </div>
+                      )}
                       <div className="h-16 w-16 rounded-2xl bg-brand-100 flex items-center justify-center text-brand-600 font-black text-2xl">
                          {emp.name.charAt(0)}
                       </div>
@@ -872,6 +979,75 @@ export default function EmployeesPage() {
                 )}
              </div>
           ))}
+        </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="p-8 border-t border-office-border flex items-center justify-between gap-4">
+            <div className="hidden sm:block">
+              <p className="text-xs font-black text-slate-400 uppercase tracking-widest">
+                Halaman {currentPage} dari {totalPages}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button 
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+              >
+                <ChevronLeft size={16} /> Prev
+              </button>
+              
+              <div className="flex items-center gap-1">
+                {Array.from({ length: totalPages }).map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setCurrentPage(i + 1)}
+                    className={`hidden sm:flex h-10 w-10 items-center justify-center rounded-xl text-[10px] font-black transition-all ${
+                      currentPage === i + 1 
+                        ? "bg-brand-600 text-white shadow-lg shadow-brand-100" 
+                        : "bg-slate-50 text-slate-500 hover:bg-slate-100"
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </div>
+
+              <button 
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="flex-1 sm:flex-none flex items-center justify-center gap-2 h-10 px-4 bg-slate-50 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 disabled:opacity-30 transition-all active:scale-95"
+              >
+                Next <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Actions Sticky Bar (Mobile) */}
+        <div className="md:hidden">
+          <AnimatePresence>
+            {selectedIds.length > 0 && (
+              <motion.div 
+                initial={{ y: 100 }}
+                animate={{ y: 0 }}
+                exit={{ y: 100 }}
+                className="fixed bottom-24 left-4 right-4 bg-white rounded-[2rem] shadow-2xl border border-office-border p-4 z-[90] flex items-center justify-between"
+              >
+                <div className="flex flex-col pl-4">
+                   <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{selectedIds.length} Terpilih</span>
+                   <span className="font-black text-slate-900 leading-tight">Hapus Masal</span>
+                </div>
+                <button 
+                  onClick={handleBulkDelete}
+                  className="bg-rose-600 text-white px-6 py-4 rounded-3xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all shadow-lg shadow-rose-200"
+                >
+                  Hapus ({selectedIds.length})
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </div>
