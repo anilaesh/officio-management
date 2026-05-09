@@ -1,6 +1,6 @@
-import { useState, useEffect, FormEvent, ChangeEvent } from 'react';
+import { useState, useEffect, useMemo, FormEvent, ChangeEvent } from 'react';
 import { useAuth } from '../../lib/AuthContext';
-import { supabase, InventoryItem, InventoryRequest, InventoryRequestType } from '../../lib/supabase';
+import { supabase, InventoryItem, InventoryRequest, InventoryRequestType, InventoryRequestStatus } from '../../lib/supabase';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Package, 
@@ -504,25 +504,32 @@ export default function InventoryPage() {
     }
   };
 
-  const handleUpdateStatus = async (status: 'approved' | 'rejected') => {
+  const handleUpdateStatus = async (status: InventoryRequestStatus) => {
     if (!selectedRequest) return;
     setIsSubmitting(true);
 
     if (effectivelyDemo) {
       const storedItems = localStorage.getItem('officio_demo_inventory');
       let currentItems = storedItems ? JSON.parse(storedItems) : [];
+      let updatedItems = [...currentItems];
 
-      // If approved and type is borrow, decrement inventory quantity
-      if (status === 'approved' && selectedRequest.type === 'borrow') {
-        const itemIndex = currentItems.findIndex((i: InventoryItem) => i.id === selectedRequest.item_id);
+      // Logic: If approved borrow, decrement inventory. If returned, increment.
+      if (selectedRequest.type === 'borrow') {
+        const itemIndex = updatedItems.findIndex((i: InventoryItem) => i.id === selectedRequest.item_id);
         if (itemIndex !== -1) {
-          if (currentItems[itemIndex].quantity < selectedRequest.quantity) {
-            toast('Stok tidak cukup untuk menyetujui peminjaman ini.');
-            setIsSubmitting(false);
-            return;
+          if (status === 'approved' && selectedRequest.status === 'pending') {
+            if (updatedItems[itemIndex].quantity < selectedRequest.quantity) {
+              toast('Stok tidak cukup untuk menyetujui peminjaman ini.');
+              setIsSubmitting(false);
+              return;
+            }
+            updatedItems[itemIndex].quantity -= selectedRequest.quantity;
+          } else if (status === 'returned' && selectedRequest.status === 'approved') {
+            updatedItems[itemIndex].quantity += selectedRequest.quantity;
           }
-          currentItems[itemIndex].quantity -= selectedRequest.quantity;
-          localStorage.setItem('officio_demo_inventory', JSON.stringify(currentItems));
+          
+          localStorage.setItem('officio_demo_inventory', JSON.stringify(updatedItems));
+          setItems(updatedItems);
           new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_INVENTORY' });
         }
       }
@@ -533,22 +540,18 @@ export default function InventoryPage() {
         r.id === selectedRequest.id ? { ...r, status, admin_note: adminNote } : r
       );
       localStorage.setItem('officio_demo_inventory_requests', JSON.stringify(currentRequests));
+      setRequests(currentRequests);
       new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_REQUESTS' });
       
       setModalType(null);
       setAdminNote('');
       setIsSubmitting(false);
-      toast(`Permintaan telah di${status === 'approved' ? 'setujui' : 'tolak'}.`);
-      
-      await fetchItems();
-      await fetchRequests();
+      toast(`Permintaan telah ${status === 'approved' ? 'disetujui' : status === 'returned' ? 'diselesaikan' : 'ditolak'}.`);
       return;
     }
 
     try {
-      // If approved and type is borrow, decrement inventory quantity in Supabase
-      if (status === 'approved' && selectedRequest.type === 'borrow' && selectedRequest.item_id) {
-        // Fetch current quantity first to be safe
+      if (selectedRequest.type === 'borrow' && selectedRequest.item_id) {
         const { data: itemData, error: itemError } = await supabase
           .from('inventory')
           .select('quantity')
@@ -557,18 +560,26 @@ export default function InventoryPage() {
         
         if (itemError) throw itemError;
         
-        if (itemData.quantity < selectedRequest.quantity) {
-          toast('Stok tidak cukup untuk menyetujui peminjaman ini.');
-          setIsSubmitting(false);
-          return;
+        let newQuantity = itemData.quantity;
+        if (status === 'approved' && selectedRequest.status === 'pending') {
+          if (itemData.quantity < selectedRequest.quantity) {
+            toast('Stok tidak cukup untuk menyetujui peminjaman ini.');
+            setIsSubmitting(false);
+            return;
+          }
+          newQuantity -= selectedRequest.quantity;
+        } else if (status === 'returned' && selectedRequest.status === 'approved') {
+          newQuantity += selectedRequest.quantity;
         }
 
-        const { error: updateItemError } = await supabase
-          .from('inventory')
-          .update({ quantity: itemData.quantity - selectedRequest.quantity })
-          .eq('id', selectedRequest.item_id);
-        
-        if (updateItemError) throw updateItemError;
+        if (newQuantity !== itemData.quantity) {
+          const { error: updateItemError } = await supabase
+            .from('inventory')
+            .update({ quantity: newQuantity })
+            .eq('id', selectedRequest.item_id);
+          
+          if (updateItemError) throw updateItemError;
+        }
       }
 
       const { error } = await supabase
@@ -581,11 +592,12 @@ export default function InventoryPage() {
       setModalType(null);
       setAdminNote('');
       setIsSubmitting(false);
-      toast(`Permintaan telah di${status === 'approved' ? 'setujui' : 'tolak'}.`);
+      toast(`Permintaan telah ${status === 'approved' ? 'disetujui' : status === 'returned' ? 'diselesaikan' : 'ditolak'}.`);
       await fetchItems();
       await fetchRequests();
     } catch (err) {
       console.error(err);
+      toast('Gagal memperbarui status.');
     } finally {
       setIsSubmitting(false);
     }
@@ -708,6 +720,21 @@ export default function InventoryPage() {
   useEffect(() => {
     setCurrentPageRequests(1);
   }, [activeTab]);
+
+  // Stats calculations
+  const stats = useMemo(() => {
+    const totalAssets = items.reduce((acc, curr) => acc + curr.quantity, 0);
+    const badCondition = items.filter(i => i.condition !== 'Baik').length;
+    const currentBorrowed = requests
+      .filter(r => r.type === 'borrow' && r.status === 'approved')
+      .reduce((acc, curr) => acc + curr.quantity, 0);
+    
+    return {
+      totalAssets,
+      badCondition,
+      currentBorrowed
+    };
+  }, [items, requests]);
 
   return (
     <div className="space-y-8">
@@ -846,21 +873,21 @@ export default function InventoryPage() {
                <div className="bg-brand-50 p-4 rounded-2xl text-brand-600"><BarChart2 className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Total Aset</p>
-                  <p className="text-2xl font-black text-gray-900">{items.reduce((acc, curr) => acc + curr.quantity, 0)} Unit</p>
+                  <p className="text-2xl font-black text-gray-900">{stats.totalAssets} Unit</p>
                </div>
             </div>
             <div className="bg-white p-6 rounded-3xl border border-office-border flex items-center gap-4">
                <div className="bg-rose-50 p-4 rounded-2xl text-rose-600"><AlertTriangle className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Kondisi Buruk</p>
-                  <p className="text-2xl font-black text-gray-900">{items.filter(i => i.condition !== 'Baik').length} Kategori</p>
+                  <p className="text-2xl font-black text-gray-900">{stats.badCondition} Kategori</p>
                </div>
             </div>
             <div className="bg-white p-6 rounded-3xl border border-office-border flex items-center gap-4">
                <div className="bg-indigo-50 p-4 rounded-2xl text-indigo-600"><History className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Dipinjam Saat Ini</p>
-                  <p className="text-2xl font-black text-gray-900">{requests.filter(r => r.type === 'borrow' && r.status === 'approved').length} Unit</p>
+                  <p className="text-2xl font-black text-gray-900">{stats.currentBorrowed} Unit</p>
                </div>
             </div>
           </div>
@@ -1669,8 +1696,11 @@ export default function InventoryPage() {
                                     <p className={cn(
                                         "font-bold uppercase text-xs",
                                         selectedRequest?.status === 'pending' ? 'text-amber-500' : 
-                                        selectedRequest?.status === 'approved' ? 'text-green-500' : 'text-rose-500'
-                                    )}>{selectedRequest?.status === 'pending' ? 'Menunggu' : selectedRequest?.status === 'approved' ? 'Disetujui' : 'Ditolak'}</p>
+                                        selectedRequest?.status === 'approved' ? 'text-emerald-500' : 
+                                        selectedRequest?.status === 'returned' ? 'text-blue-500' : 'text-rose-500'
+                                    )}>{selectedRequest?.status === 'pending' ? 'Menunggu' : 
+                                        selectedRequest?.status === 'approved' ? 'Disetujui / Dipinjam' : 
+                                        selectedRequest?.status === 'returned' ? 'Sudah Kembali' : 'Ditolak'}</p>
                                 </div>
                             </div>
 
@@ -1725,13 +1755,23 @@ export default function InventoryPage() {
                                         <button 
                                             onClick={() => handleUpdateStatus('approved')}
                                             disabled={isSubmitting}
-                                            className="flex-3 bg-green-600 text-white font-bold uppercase py-4 rounded-2xl hover:bg-green-700 transition-all shadow-lg shadow-green-100 disabled:opacity-50"
+                                            className="flex-[3] bg-brand-600 text-white font-bold uppercase py-4 rounded-2xl hover:bg-brand-700 transition-all shadow-lg shadow-brand-100 disabled:opacity-50"
                                         >
                                             Setujui
                                         </button>
                                     </div>
                                 </div>
-                            ) : selectedRequest?.admin_note && (
+                             ) : profile?.role === 'admin' && selectedRequest?.status === 'approved' && selectedRequest?.type === 'borrow' ? (
+                                <div className="pt-4 border-t border-office-border space-y-4">
+                                     <button 
+                                         onClick={() => handleUpdateStatus('returned')}
+                                         disabled={isSubmitting}
+                                         className="w-full bg-emerald-600 text-white font-black uppercase tracking-widest text-[10px] py-5 rounded-2xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 transition-all disabled:opacity-50"
+                                     >
+                                         Selesaikan & Kembalikan Barang ke Stok
+                                     </button>
+                                </div>
+                             ) : selectedRequest?.admin_note && (
                                 <div className="pt-4 border-t border-office-border">
                                      <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Catatan Admin</p>
                                      <div className="bg-brand-50/50 p-4 rounded-2xl text-brand-700 text-sm font-bold">
