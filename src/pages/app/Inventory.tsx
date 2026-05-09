@@ -591,70 +591,6 @@ export default function InventoryPage() {
     }
   };
 
-  const handleReturnItem = async () => {
-    if (!selectedRequest || selectedRequest.type !== 'borrow' || selectedRequest.status !== 'approved') return;
-    setIsSubmitting(true);
-
-    if (effectivelyDemo) {
-      const storedItems = localStorage.getItem('officio_demo_inventory');
-      let currentItems = storedItems ? JSON.parse(storedItems) : [];
-      
-      const itemIndex = currentItems.findIndex((i: InventoryItem) => i.id === selectedRequest.item_id);
-      if (itemIndex !== -1) {
-        currentItems[itemIndex].quantity += selectedRequest.quantity;
-        localStorage.setItem('officio_demo_inventory', JSON.stringify(currentItems));
-      }
-
-      const storedRequests = localStorage.getItem('officio_demo_inventory_requests');
-      let currentRequests = storedRequests ? JSON.parse(storedRequests) : [];
-      currentRequests = currentRequests.map((r: any) => 
-        r.id === selectedRequest.id ? { ...r, status: 'returned' } : r
-      );
-      localStorage.setItem('officio_demo_inventory_requests', JSON.stringify(currentRequests));
-      
-      new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_INVENTORY' });
-      new BroadcastChannel('officio_demo_sync').postMessage({ type: 'REFRESH_REQUESTS' });
-
-      setModalType(null);
-      setIsSubmitting(false);
-      toast('Barang telah dikembalikan ke stok.');
-      await fetchItems();
-      await fetchRequests();
-      return;
-    }
-
-    try {
-      if (selectedRequest.item_id) {
-        const { data: itemData, error: itemError } = await supabase
-          .from('inventory')
-          .select('quantity')
-          .eq('id', selectedRequest.item_id)
-          .single();
-        if (itemError) throw itemError;
-
-        await supabase
-          .from('inventory')
-          .update({ quantity: (itemData?.quantity || 0) + selectedRequest.quantity })
-          .eq('id', selectedRequest.item_id);
-      }
-
-      await supabase
-        .from('inventory_requests')
-        .update({ status: 'returned' })
-        .eq('id', selectedRequest.id);
-
-      setModalType(null);
-      setIsSubmitting(false);
-      toast('Barang telah dikembalikan ke stok.');
-      await fetchItems();
-      await fetchRequests();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const downloadTemplate = () => {
     const template = [
       { 'Nama Barang': 'Laptop Macbook Air M2', 'Jumlah': 10, 'Kondisi': 'Baik', 'Lokasi': 'Gudang IT' },
@@ -910,11 +846,7 @@ export default function InventoryPage() {
                <div className="bg-brand-50 p-4 rounded-2xl text-brand-600"><BarChart2 className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Total Aset</p>
-                  <p className="text-2xl font-black text-gray-900">
-                    {(items.reduce((acc, curr) => acc + curr.quantity, 0) + 
-                      requests.filter(r => r.type === 'borrow' && r.status === 'approved').reduce((acc, curr) => acc + curr.quantity, 0)
-                    )} Unit
-                  </p>
+                  <p className="text-2xl font-black text-gray-900">{items.reduce((acc, curr) => acc + curr.quantity, 0)} Unit</p>
                </div>
             </div>
             <div className="bg-white p-6 rounded-3xl border border-office-border flex items-center gap-4">
@@ -928,7 +860,7 @@ export default function InventoryPage() {
                <div className="bg-indigo-50 p-4 rounded-2xl text-indigo-600"><History className="h-6 w-6" /></div>
                <div>
                   <p className="text-xs font-bold text-gray-400 uppercase">Dipinjam Saat Ini</p>
-                  <p className="text-2xl font-black text-gray-900">{requests.filter(r => r.type === 'borrow' && r.status === 'approved').reduce((acc, curr) => acc + curr.quantity, 0)} Unit</p>
+                  <p className="text-2xl font-black text-gray-900">{requests.filter(r => r.type === 'borrow' && r.status === 'approved').length} Unit</p>
                </div>
             </div>
           </div>
@@ -1737,9 +1669,8 @@ export default function InventoryPage() {
                                     <p className={cn(
                                         "font-bold uppercase text-xs",
                                         selectedRequest?.status === 'pending' ? 'text-amber-500' : 
-                                        selectedRequest?.status === 'approved' ? 'text-green-500' : 
-                                        selectedRequest?.status === 'returned' ? 'text-blue-500' : 'text-rose-500'
-                                    )}>{selectedRequest?.status === 'pending' ? 'Menunggu' : selectedRequest?.status === 'approved' ? 'Disetujui' : selectedRequest?.status === 'returned' ? 'Dikembalikan' : 'Ditolak'}</p>
+                                        selectedRequest?.status === 'approved' ? 'text-green-500' : 'text-rose-500'
+                                    )}>{selectedRequest?.status === 'pending' ? 'Menunggu' : selectedRequest?.status === 'approved' ? 'Disetujui' : 'Ditolak'}</p>
                                 </div>
                             </div>
 
@@ -1799,24 +1730,6 @@ export default function InventoryPage() {
                                             Setujui
                                         </button>
                                     </div>
-                                </div>
-                            ) : profile?.role === 'admin' && selectedRequest?.type === 'borrow' && selectedRequest?.status === 'approved' ? (
-                                <div className="pt-4 space-y-4">
-                                     {selectedRequest.admin_note && (
-                                         <div>
-                                            <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Catatan Admin</p>
-                                            <div className="bg-brand-50/50 p-4 rounded-2xl text-brand-700 text-sm font-bold">
-                                                {selectedRequest.admin_note}
-                                            </div>
-                                         </div>
-                                     )}
-                                     <button 
-                                        onClick={handleReturnItem}
-                                        disabled={isSubmitting}
-                                        className="w-full bg-blue-600 text-white font-bold uppercase py-4 rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 flex items-center justify-center gap-2"
-                                     >
-                                        <History size={18} /> Tandai Sudah Dikembalikan
-                                     </button>
                                 </div>
                             ) : selectedRequest?.admin_note && (
                                 <div className="pt-4 border-t border-office-border">
