@@ -8,7 +8,6 @@ import {
   MapPin, 
   Clock, 
   Calendar,
-  Package,
   CheckCircle2,
   AlertCircle,
   XCircle,
@@ -380,20 +379,6 @@ export default function Dashboard() {
             <StatCard label="Aset/Inventaris" value="98%" subtitle="Kondisi Baik" color="green" icon={CheckCircle2} />
           </div>
 
-          {/* New Shortcut Navigation - The "7 Parts" */}
-          <div className="space-y-6">
-            <h2 className="text-[15px] font-black text-slate-800 uppercase tracking-widest">Akses Cepat (7 Bagian)</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4">
-              <ShortcutButton icon={Clock} label="Absensi" link="/app/attendance" color="bg-amber-50 text-amber-600" />
-              <ShortcutButton icon={Calendar} label="Meeting" link="/app/meetings" color="bg-blue-50 text-blue-600" />
-              <ShortcutButton icon={Package} label="Inventaris" link="/app/inventory" color="bg-brand-50 text-brand-600" />
-              <ShortcutButton icon={FileText} label="Cuti" link="/app/leave" color="bg-purple-50 text-purple-600" />
-              <ShortcutButton icon={TrendingUp} label="Laporan" link="/app/reports" color="bg-indigo-50 text-indigo-600" />
-              <ShortcutButton icon={Users} label="Karyawan" link="/app/employees" color="bg-slate-50 text-slate-600" />
-              <ShortcutButton icon={Building2} label="Profil" link="/app/profile" color="bg-rose-50 text-rose-600" />
-            </div>
-          </div>
-
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-6">
               <SectionHeader title="Aktivitas Perusahaan" link="/app/attendance" />
@@ -474,19 +459,6 @@ export default function Dashboard() {
       ) : (
         /* ================= EMPLOYEE VIEW ================= */
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          {/* Shortcut Navigation - The "6 Parts" */}
-          <div className="space-y-6">
-            <h2 className="text-[15px] font-black text-slate-800 uppercase tracking-widest">Akses Cepat (6 Bagian)</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-              <ShortcutButton icon={Clock} label="Absensi" link="/app/attendance" color="bg-amber-50 text-amber-600" />
-              <ShortcutButton icon={Calendar} label="Meeting" link="/app/meetings" color="bg-blue-50 text-blue-600" />
-              <ShortcutButton icon={Package} label="Inventaris" link="/app/inventory" color="bg-brand-50 text-brand-600" />
-              <ShortcutButton icon={FileText} label="Cuti" link="/app/leave" color="bg-purple-50 text-purple-600" />
-              <ShortcutButton icon={TrendingUp} label="Laporan" link="/app/reports" color="bg-indigo-50 text-indigo-600" />
-              <ShortcutButton icon={Building2} label="Profil" link="/app/profile" color="bg-rose-50 text-rose-600" />
-            </div>
-          </div>
-
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* My Status Column */}
             <div className="lg:col-span-1 space-y-6">
@@ -611,20 +583,6 @@ function SectionHeader({ title, link }: { title: string, link: string }) {
         Lihat Semua <ArrowRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
       </Link>
     </div>
-  );
-}
-
-function ShortcutButton({ icon: Icon, label, link, color }: any) {
-  return (
-    <Link 
-      to={link}
-      className="bg-white p-4 rounded-3xl border border-office-border flex flex-col items-center justify-center gap-3 hover:shadow-xl hover:shadow-slate-100 hover:border-brand-100 transition-all group"
-    >
-      <div className={cn("p-4 rounded-2xl group-hover:scale-110 transition-transform", color)}>
-        <Icon size={24} />
-      </div>
-      <span className="text-[10px] font-black text-slate-600 uppercase tracking-widest">{label}</span>
-    </Link>
   );
 }
 
