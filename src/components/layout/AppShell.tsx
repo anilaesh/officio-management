@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Building2,
   Menu,
+  TrendingUp,
   X
 } from 'lucide-react';
 import { useState } from 'react';
@@ -29,7 +30,7 @@ export default function AppShell() {
     { name: 'Meeting', path: '/app/meetings', icon: Calendar, roles: ['admin', 'employee'] },
     { name: 'Inventaris', path: '/app/inventory', icon: Package, roles: ['admin', 'employee'] },
     { name: 'Cuti', path: '/app/leave', icon: FileText, roles: ['admin', 'employee'] },
-    { name: 'Laporan', path: '/app/reports', icon: BarChart3, roles: ['admin', 'employee'] },
+    { name: 'Laporan', path: '/app/reports', icon: TrendingUp, roles: ['admin', 'employee'] },
     { name: 'Karyawan', path: '/app/employees', icon: Users, roles: ['admin'] },
   ];
 
@@ -161,36 +162,11 @@ export default function AppShell() {
         </header>
 
         {/* Dynamic Content */}
-        <main className="flex-1 overflow-y-auto p-4 lg:p-10 pb-24 lg:pb-10">
+        <main className="flex-1 overflow-y-auto p-4 lg:p-10 pb-10">
           <div className="max-w-7xl mx-auto">
              <Outlet />
           </div>
         </main>
-
-        {/* Bottom Navigation (Mobile Only) */}
-        <div className="lg:hidden fixed bottom-0 left-0 right-0 h-20 bg-white border-t border-office-border px-6 flex items-center justify-around z-40 pb-safe shadow-[0_-8px_30px_rgb(0,0,0,0.04)]">
-           {filteredMenu.slice(0, 4).map((item) => {
-             const isActive = location.pathname === item.path;
-             return (
-               <Link 
-                 key={item.path} 
-                 to={item.path}
-                 className={cn(
-                   "flex flex-col items-center gap-1.5 transition-all p-2 rounded-2xl",
-                   isActive ? "text-brand-600" : "text-slate-400"
-                 )}
-               >
-                 <div className={cn(
-                   "p-2 rounded-xl transition-all",
-                   isActive ? "bg-brand-50" : "bg-transparent"
-                 )}>
-                   <item.icon size={22} strokeWidth={isActive ? 2.5 : 2} />
-                 </div>
-                 <span className="text-[10px] font-black uppercase tracking-tighter">{item.name}</span>
-               </Link>
-             );
-           })}
-        </div>
       </div>
     </div>
   );
